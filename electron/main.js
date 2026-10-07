@@ -17,6 +17,8 @@ const COLORS = {
   dark: { color: '#121318', symbolColor: '#c3bdb1' },
 };
 const TITLEBAR_HEIGHT = 52;
+const isMac = process.platform === 'darwin';
+let quitting = false;
 
 /* ---------- Settings (theme + window bounds) ---------- */
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -64,9 +66,9 @@ function createWindow(filePath = null) {
     show: false,
     title: 'Inkwell',
     backgroundColor: overlay().color,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: overlay(),
-    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    ...(isMac
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 19 } }
+      : { titleBarStyle: 'hidden', titleBarOverlay: overlay(), icon: path.join(__dirname, '..', 'build', 'icon.png') }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -121,6 +123,7 @@ function createWindow(filePath = null) {
       });
       if (choice === 0) win.webContents.send('save-and-close');
       else if (choice === 1) { st.forceClose = true; win.close(); }
+      else quitting = false;
       return;
     }
     settings.maximized = win.isMaximized();
@@ -285,12 +288,117 @@ ipcMain.on('show-in-folder', (_event, filePath) => shell.showItemInFolder(filePa
 nativeTheme.on('updated', () => {
   for (const { win } of windows.values()) {
     if (win.isDestroyed()) continue;
-    win.setTitleBarOverlay(overlay());
+    if (!isMac) win.setTitleBarOverlay(overlay());
     win.setBackgroundColor(overlay().color);
   }
 });
 
+/* ---------- macOS menu ---------- */
+// Accelerators are shown in the menu but handled by the renderer (registerAccelerator: false),
+// so a shortcut never fires twice. Clicking an item sends the command to the focused window.
+function sendCommand(id) {
+  const win = BrowserWindow.getFocusedWindow();
+  if (win) win.webContents.send('menu-command', id);
+  else if (id === 'open' || id === 'new') createWindow();
+}
+
+function buildMacMenu() {
+  const cmd = (label, id, accelerator) => ({ label, click: () => sendCommand(id), ...(accelerator ? { accelerator, registerAccelerator: false } : {}) });
+  return Menu.buildFromTemplate([
+    {
+      label: app.name,
+      submenu: [
+        cmd('About Inkwell', 'about'),
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Window', accelerator: 'Cmd+N', registerAccelerator: false, click: () => createWindow() },
+        cmd('New Document', 'new', 'Cmd+Alt+N'),
+        cmd('Open…', 'open', 'Cmd+O'),
+        { role: 'recentDocuments', submenu: [{ role: 'clearRecentDocuments' }] },
+        { type: 'separator' },
+        cmd('Save', 'save', 'Cmd+S'),
+        cmd('Save As…', 'saveAs', 'Cmd+Shift+S'),
+        { type: 'separator' },
+        cmd('Export as PDF…', 'exportPdf'),
+        cmd('Export as HTML…', 'exportHtml'),
+        cmd('Copy as Rich Text', 'copyHtml'),
+        cmd('Show in Finder', 'showInFolder'),
+        { type: 'separator' },
+        cmd('Print…', 'print', 'Cmd+P'),
+        { type: 'separator' },
+        { label: 'Close Window', accelerator: 'Cmd+W', click: () => { const w = BrowserWindow.getFocusedWindow(); if (w) w.close(); } },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        cmd('Write', 'write', 'Cmd+1'),
+        cmd('Split', 'split', 'Cmd+2'),
+        cmd('Read', 'read', 'Cmd+3'),
+        { type: 'separator' },
+        cmd('Toggle Sidebar', 'sidebar', 'Cmd+Shift+B'),
+        cmd('Focus Mode', 'zen', 'Cmd+.'),
+        cmd('Command Palette…', 'palette', 'Cmd+Shift+P'),
+        { type: 'separator' },
+        cmd('Light Theme', 'themeLight'),
+        cmd('Dark Theme', 'themeDark'),
+        cmd('System Theme', 'themeSystem'),
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        cmd('Keyboard Shortcuts', 'shortcuts'),
+        { label: 'Inkwell on GitHub', click: () => shell.openExternal('https://github.com/wl-lankin/inkwell') },
+        { label: 'wolfgang-linz.de', click: () => shell.openExternal('https://wolfgang-linz.de') },
+      ],
+    },
+  ]);
+}
+
 /* ---------- App lifecycle ---------- */
+// macOS delivers files opened from Finder through 'open-file', often before the app is ready.
+const pendingOpens = [];
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (app.isReady()) openPath(filePath);
+  else pendingOpens.push(filePath);
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -303,11 +411,13 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     loadSettings();
     if (settings.theme) nativeTheme.themeSource = settings.theme;
-    Menu.setApplicationMenu(null);
-    const files = docArgs(process.argv.slice(1));
+    Menu.setApplicationMenu(isMac ? buildMacMenu() : null);
+    const files = [...pendingOpens, ...docArgs(process.argv.slice(1))];
     if (files.length) files.forEach(openPath);
     else createWindow();
   });
 
-  app.on('window-all-closed', () => app.quit());
+  app.on('before-quit', () => { quitting = true; });
+  app.on('activate', () => { if (app.isReady() && windows.size === 0) createWindow(); });
+  app.on('window-all-closed', () => { if (!isMac || quitting) app.quit(); });
 }

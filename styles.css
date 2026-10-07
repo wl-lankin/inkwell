@@ -770,6 +770,7 @@ kbd {
 html:not(.native) .native-only { display: none !important; }
 .native .topbar { -webkit-app-region: drag; padding-right: 150px; user-select: none; }
 .native .topbar button, .native .topbar input, .native .menu { -webkit-app-region: no-drag; }
+.native.mac .topbar { padding-left: 84px; padding-right: 12px; }
 .native .app.zen .topbar { visibility: visible; border-color: transparent; background: transparent; }
 .native .app.zen .topbar > * { visibility: hidden; }
 .native .app.zen { grid-template-rows: 52px 1fr 0; }

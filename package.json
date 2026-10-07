@@ -1,7 +1,7 @@
 {
   "name": "inkwell",
   "productName": "Inkwell",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A calm, fast Markdown reader and writer.",
   "author": {
     "name": "Wolfgang Linz",
@@ -13,14 +13,24 @@
     "url": "https://github.com/wl-lankin/inkwell.git"
   },
   "bugs": "https://github.com/wl-lankin/inkwell/issues",
-  "keywords": ["markdown", "editor", "reader", "electron", "windows", "desktop"],
+  "keywords": [
+    "markdown",
+    "editor",
+    "reader",
+    "electron",
+    "windows",
+    "macos",
+    "desktop"
+  ],
   "license": "MIT",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "icon": "electron scripts/build-icon.js",
-    "dist": "npm run icon && electron-builder --win nsis"
+    "dist": "npm run icon && electron-builder --win nsis",
+    "dist:win": "electron-builder --win nsis --publish never",
+    "dist:mac": "electron-builder --mac --universal --publish never"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
@@ -34,7 +44,10 @@
   "build": {
     "appId": "io.inkwell.app",
     "productName": "Inkwell",
-    "directories": { "output": "dist", "buildResources": "build" },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "files": [
       "index.html",
       "styles.css",
@@ -63,12 +76,63 @@
     },
     "fileAssociations": [
       {
-        "ext": ["md", "markdown", "mdown", "mkd", "mkdn"],
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd",
+          "mkdn"
+        ],
         "name": "Inkwell.Markdown",
         "description": "Markdown document",
         "role": "Editor",
-        "icon": "build/file-icon.ico"
+        "icon": "build/file-icon",
+        "rank": "Default"
       }
-    ]
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "artifactName": "Inkwell-${version}-mac-${arch}.${ext}",
+      "minimumSystemVersion": "12.0"
+    },
+    "dmg": {
+      "title": "Inkwell ${version}",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 140,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
   }
 }

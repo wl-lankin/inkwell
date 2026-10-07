@@ -14,6 +14,12 @@
   const recentEl = $('#recent');
 
   const native = window.inkwellNative || null;
+  const isMac = !!native && native.platform === 'darwin';
+  // Shortcut labels are written Windows-style ("Ctrl Shift S") and translated for macOS.
+  const keyLabel = (s) => (isMac ? s.replace(/Ctrl/g, '⌘').replace(/Alt/g, '⌥').replace(/Shift/g, '⇧') : s);
+  const welcomeText = () => (isMac
+    ? window.INKWELL_WELCOME.replace(/`Ctrl (?!H`)/g, '`Cmd ').replace(/Ctrl ([0-9OSNPB.])/g, 'Cmd $1').replace(/Explorer/g, 'Finder')
+    : window.INKWELL_WELCOME);
   const hasFsAccess = 'showOpenFilePicker' in window;
   const MD_TYPES = [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.mdown', '.mkd'], 'text/plain': ['.txt'] } }];
 
@@ -1003,12 +1009,12 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     ...(native ? [
       { id: 'exportPdf', label: 'Export as PDF', icon: 'download', run: exportPdf },
       { id: 'newWindow', label: 'New window', icon: 'plus', kbd: 'Ctrl N', run: () => native.newWindow() },
-      { id: 'showInFolder', label: 'Show file in Explorer', icon: 'open', run: () => (state.handle ? native.showInFolder(state.handle.path) : toast('Save the document first')) },
+      { id: 'showInFolder', label: isMac ? 'Show file in Finder' : 'Show file in Explorer', icon: 'open', run: () => (state.handle ? native.showInFolder(state.handle.path) : toast('Save the document first')) },
     ] : []),
     { id: 'palette', label: 'Command palette', icon: 'command', kbd: 'Ctrl Shift P', run: () => openPalette() },
     { id: 'insertTable', label: 'Insert table', icon: 'table', run: formats.table },
     { id: 'insertTask', label: 'Insert task list', icon: 'check', run: formats.task },
-    { id: 'welcome', label: 'Show welcome guide', icon: 'book', run: async () => { if (await confirmDiscard()) setDocument({ content: window.INKWELL_WELCOME, name: 'Welcome.md' }); } },
+    { id: 'welcome', label: 'Show welcome guide', icon: 'book', run: async () => { if (await confirmDiscard()) setDocument({ content: welcomeText(), name: 'Welcome.md' }); } },
   ];
   const commandById = Object.fromEntries(commands.map((c) => [c.id, c]));
 
@@ -1045,7 +1051,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
       const li = document.createElement('li');
       li.setAttribute('role', 'option');
       li.className = i === pActive ? 'active' : '';
-      li.innerHTML = `<svg><use href="#i-${c.icon}"/></svg><span></span>${c.kbd ? `<kbd>${c.kbd}</kbd>` : ''}`;
+      li.innerHTML = `<svg><use href="#i-${c.icon}"/></svg><span></span>${c.kbd ? `<kbd>${keyLabel(c.kbd)}</kbd>` : ''}`;
       li.querySelector('span').textContent = c.label;
       li.addEventListener('mousemove', () => { if (pActive !== i) { pActive = i; highlightPalette(); } });
       li.addEventListener('click', () => runPalette(i));
@@ -1096,7 +1102,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     ]],
     ['Formatting', [
       ['Bold', 'Ctrl B'], ['Italic', 'Ctrl I'], ['Strikethrough', 'Ctrl Shift X'],
-      ['Link', 'Ctrl K'], ['Inline code', 'Ctrl E'], ['Cycle heading', 'Ctrl H'],
+      ['Link', 'Ctrl K'], ['Inline code', 'Ctrl E'], ['Cycle heading', isMac ? '⌃ H' : 'Ctrl H'],
       ['Indent / outdent list', 'Tab / Shift Tab'],
     ]],
   ];
@@ -1132,7 +1138,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
         const dt = document.createElement('dt');
         const dd = document.createElement('dd');
         dt.textContent = label;
-        keys.split(' ').forEach((k) => {
+        keyLabel(keys).split(' ').forEach((k) => {
           const kbd = document.createElement('kbd');
           kbd.textContent = k;
           dd.appendChild(kbd);
@@ -1196,7 +1202,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     if (k === 's' && e.shiftKey) { e.preventDefault(); saveAs(); }
     else if (k === 's') { e.preventDefault(); save(); }
     else if (k === 'o') { e.preventDefault(); openFile(); }
-    else if (k === 'n' && e.altKey) { e.preventDefault(); newDoc(); }
+    else if (e.code === 'KeyN' && e.altKey) { e.preventDefault(); newDoc(); }
     else if (k === 'n' && native && !e.shiftKey) { e.preventDefault(); native.newWindow(); }
     else if (k === 'w' && native && !e.shiftKey) { e.preventDefault(); window.close(); }
     else if (k === 'p' && e.shiftKey) { e.preventDefault(); palette.hidden ? openPalette() : closePalette(); }
@@ -1216,6 +1222,13 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
 
   /* ---------- Boot ---------- */
   async function boot() {
+    if (isMac) {
+      for (const el of $('[title]')) el.title = keyLabel(el.title).replace(/⌘+H/, '⌃+H');
+      for (const el of $('#more-menu kbd')) el.textContent = keyLabel(el.textContent);
+      const finder = $('#more-menu [data-cmd="showInFolder"]');
+      if (finder) finder.lastChild.textContent = 'Show in Finder';
+    }
+    if (native) native.onMenuCommand((id) => { if (commandById[id]) commandById[id].run(); });
     setTheme(currentTheme(), false);
     const split = ls.get('split', null);
     if (split) workspace.style.setProperty('--split', split);
@@ -1230,7 +1243,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
         addRecent({ name: initial.name, path: initial.path });
       } else if (!ls.get('welcomed', false)) {
         ls.set('welcomed', true);
-        setDocument({ content: window.INKWELL_WELCOME, name: 'Welcome.md' });
+        setDocument({ content: welcomeText(), name: 'Welcome.md' });
       } else {
         setDocument({ content: '', name: 'Untitled.md' });
       }
@@ -1244,7 +1257,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
       render();
       updateMeta();
     } else {
-      setDocument({ content: window.INKWELL_WELCOME, name: 'Welcome.md' });
+      setDocument({ content: welcomeText(), name: 'Welcome.md' });
     }
 
     setView(ls.get('view', 'split'));

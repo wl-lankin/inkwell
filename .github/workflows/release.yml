@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and upload to (e.g. v1.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            script: dist:win
+          - name: macOS
+            os: macos-latest
+            script: dist:mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run ${{ matrix.script }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify macOS app
+        if: runner.os == 'macOS'
+        run: |
+          APP="dist/mac-universal/Inkwell.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E 'Signature|Identifier|Format'
+          lipo -archs "$APP/Contents/MacOS/Inkwell"
+          plutil -extract CFBundleDocumentTypes json -o - "$APP/Contents/Info.plist"
+
+      - name: Smoke test macOS app
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          "dist/mac-universal/Inkwell.app/Contents/MacOS/Inkwell" "$PWD/docs/Welcome.md" &
+          sleep 12
+          screencapture -x smoke-macos.png
+          pkill -f Inkwell.app || true
+
+      - name: Upload smoke screenshot
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-macos
+          path: smoke-macos.png
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: out
+          merge-multiple: true
+
+      - name: Upload to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -la out
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Inkwell ${TAG#v}" --generate-notes
+          gh release upload "$TAG" out/* --clobber

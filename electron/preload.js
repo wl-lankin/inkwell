@@ -3,7 +3,9 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('inkwellNative', {
+  platform: process.platform,
   getAppInfo: () => ipcRenderer.invoke('app-info'),
+  onMenuCommand: (cb) => ipcRenderer.on('menu-command', (_e, id) => cb(id)),
   getInitialFile: () => ipcRenderer.invoke('initial-file'),
   openDialog: () => ipcRenderer.invoke('open-dialog'),
   readFile: (path) => ipcRenderer.invoke('read-file', path),

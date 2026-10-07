@@ -6,14 +6,14 @@
 
 **A calm place to read and write Markdown.**
 
-A fast, good-looking Markdown editor and reader for Windows, with its own window, light and dark themes, and double-click to open your `.md` files.
+A fast, good-looking Markdown editor and reader for **Windows and macOS**, with its own window, light and dark themes, and double-click to open your `.md` files.
 
 [![Latest release](https://img.shields.io/github/v/release/wl-lankin/inkwell?style=flat-square&color=3346d3)](https://github.com/wl-lankin/inkwell/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-3346d3?style=flat-square)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1f1c17?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f1c17?style=flat-square)
 ![Electron](https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white)
 
-[**Download for Windows**](https://github.com/wl-lankin/inkwell/releases/latest) · [Features](#-features) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Build from source](#%EF%B8%8F-build-from-source)
+[**Download for Windows**](https://github.com/wl-lankin/inkwell/releases/latest) · [**Download for macOS**](https://github.com/wl-lankin/inkwell/releases/latest) · [Features](#-features) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Build from source](#%EF%B8%8F-build-from-source)
 
 <br>
 
@@ -49,8 +49,9 @@ A fast, good-looking Markdown editor and reader for Windows, with its own window
 - Split view scroll-syncs **by heading**, so both sides stay on the same section
 - **Focus mode** hides everything but your words
 
-**A real Windows app**
+**A real desktop app**
 - Its own window with a themed title bar, not a browser tab
+- Feels native on both platforms: on macOS you get traffic-light window buttons, a full menu bar, `⌘` shortcuts, a Recent Documents menu, and it stays in the Dock when you close the last window
 - Registers for `.md`, `.markdown`, `.mdown`, `.mkd` and `.mkdn`, so you can make it your default and double-click to open
 - One window per document. Opening a file that's already open brings its window to the front.
 - Asks before closing with unsaved changes
@@ -76,16 +77,28 @@ A fast, good-looking Markdown editor and reader for Windows, with its own window
 
 ## 📦 Install
 
-1. Download **`Inkwell-Setup-x.y.z.exe`** from the [latest release](https://github.com/wl-lankin/inkwell/releases/latest).
-2. Run it. Inkwell installs for your user only (no admin rights needed) and adds Start Menu and Desktop shortcuts.
-3. **Make it your default Markdown app:** right-click any `.md` file, choose **Open with > Choose another app > Inkwell**, then click **Always**.
+Grab the latest version from the [**Releases page**](https://github.com/wl-lankin/inkwell/releases/latest).
+
+### Windows 10 / 11
+
+1. Download **`Inkwell-Setup-x.y.z.exe`** and run it. Inkwell installs for your user only (no admin rights needed) and adds Start Menu and Desktop shortcuts.
+2. **Make it your default Markdown app:** right-click any `.md` file, choose **Open with > Choose another app > Inkwell**, then click **Always**.
 
 > [!NOTE]
 > The installer isn't code-signed yet, so Windows SmartScreen may warn you the first time. Click **More info > Run anyway**.
 
-Windows doesn't let apps make themselves the default, so step 3 is a one-time click. You can also set it under **Settings > Apps > Default apps** by searching for `.md`.
+### macOS 12 or newer (Apple Silicon and Intel)
+
+1. Download **`Inkwell-x.y.z-mac-universal.dmg`**, open it, and drag **Inkwell** into **Applications**.
+2. **First launch:** Inkwell isn't notarized by Apple yet, so macOS blocks it the first time. Open it once, then go to **System Settings > Privacy & Security** and click **Open Anyway**. You can also run this once in Terminal:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Inkwell.app
+   ```
+3. **Make it your default Markdown app:** select any `.md` file in Finder, press **⌘ I** (Get Info), choose **Inkwell** under **Open with**, then click **Change All…**.
 
 ## ⌨️ Keyboard shortcuts
+
+On macOS, use **⌘** wherever the table says `Ctrl`. The one exception is **Cycle heading**, which is **⌃ H** on a Mac, because ⌘ H hides apps there.
 
 | Files | | View | | Formatting | |
 | --- | --- | --- | --- | --- | --- |
@@ -106,13 +119,18 @@ cd inkwell
 npm install
 npm start                    # run the app
 npm start -- notes.md        # run the app with a file
-npm run dist                 # build the installer into dist/
+npm run dist                 # Windows installer into dist/ (re-renders icons first)
+npm run dist:mac             # macOS universal .dmg + .zip (run this on a Mac)
 ```
+
+### Releases
+
+Pushing a version tag (for example `v1.2.0`) starts the [Release workflow](.github/workflows/release.yml). It builds the Windows installer and a universal macOS app on GitHub's runners, smoke-tests the Mac build, and attaches everything to the GitHub release.
 
 > [!TIP]
 > If npm blocks Electron's install script, run `node node_modules/electron/install.js` once.
 
-`npm run dist` renders the app and file icons from SVG (`scripts/build-icon.js`) and packages a per-user NSIS installer with `electron-builder`.
+`npm run icon` renders the app and file icons from SVG into `.ico` (Windows) and `.icns` (macOS). The installers are packaged with `electron-builder`.
 
 You can also open `index.html` in Chrome or Edge without Electron. In that mode Inkwell uses the File System Access API and autosaves drafts locally.
 
@@ -121,9 +139,9 @@ You can also open `index.html` in Chrome or Edge without Electron. In that mode 
 | Path | Purpose |
 | --- | --- |
 | `index.html` · `styles.css` · `app.js` | The UI: editor, preview, outline, palette, themes |
-| `electron/main.js` | Windows, file associations, file I/O, close prompts, file watching, PDF export |
+| `electron/main.js` | Windows, file associations, file I/O, close prompts, file watching, PDF export, macOS menu |
 | `electron/preload.js` | The narrow, context-isolated bridge (`window.inkwellNative`) |
-| `scripts/build-icon.js` | Renders `icon.svg` and `build/file-icon.svg` to multi-size `.ico` |
+| `scripts/build-icon.js` | Renders the SVG icons to `.ico` and `.icns` (`build/icon-mac.svg` follows the macOS icon grid) |
 | `vendor/` | [marked](https://marked.js.org), [DOMPurify](https://github.com/cure53/DOMPurify), [highlight.js](https://highlightjs.org) |
 
 ### Security
