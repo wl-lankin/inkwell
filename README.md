@@ -29,14 +29,6 @@ A fast, good-looking Markdown editor and reader for **Windows and macOS**.
     <td align="center"><sub><b>Read view</b>, dark theme</sub></td>
     <td align="center"><sub><b>Command palette</b> (<code>Ctrl Shift P</code>)</sub></td>
   </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/about-light.png" alt="About dialog"></td>
-    <td width="50%"><img src="docs/screenshots/shortcuts-dark.png" alt="Keyboard shortcuts"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>About</b> (<code>F1</code>)</sub></td>
-    <td align="center"><sub><b>Shortcuts</b> cheat sheet</sub></td>
-  </tr>
 </table>
 
 ## ✨ Features
