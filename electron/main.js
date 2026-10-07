@@ -140,8 +140,10 @@ function handleLink(url) {
   if (url.startsWith('file:')) {
     let p;
     try { p = fileURLToPath(url.split('#')[0]); } catch (e) { return; }
-    if (DOC_EXT.test(p) && fs.existsSync(p)) openPath(p);
-    else shell.openPath(p);
+    // Never launch arbitrary files from document links, and never touch network (UNC) paths.
+    if (p.startsWith('\\\\') || !fs.existsSync(p)) return;
+    if (DOC_EXT.test(p)) openPath(p);
+    else shell.showItemInFolder(p);
   } else if (/^(https?|mailto):/i.test(url)) {
     shell.openExternal(url);
   }
