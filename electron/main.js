@@ -1,10 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { fileURLToPath } = require('node:url');
+const updater = require('./updater');
 
 const DOC_EXT = /\.(md|markdown|mdown|mkd|mkdn|txt)$/i;
 const FILTERS = [
@@ -58,9 +59,10 @@ function openPath(filePath) {
 function createWindow(filePath = null) {
   const focused = BrowserWindow.getFocusedWindow();
   const bounds = settings.bounds || { width: 1280, height: 840 };
+  const work = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workAreaSize;
   const opts = {
-    width: bounds.width,
-    height: bounds.height,
+    width: Math.min(bounds.width, work.width),
+    height: Math.min(bounds.height, work.height),
     minWidth: 520,
     minHeight: 400,
     show: false,
@@ -309,6 +311,7 @@ function buildMacMenu() {
       label: app.name,
       submenu: [
         cmd('About Inkwell', 'about'),
+        { label: 'Check for Updates…', click: () => updater.check(true) },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -412,6 +415,7 @@ if (!app.requestSingleInstanceLock()) {
     loadSettings();
     if (settings.theme) nativeTheme.themeSource = settings.theme;
     Menu.setApplicationMenu(isMac ? buildMacMenu() : null);
+    updater.start();
     const files = [...pendingOpens, ...docArgs(process.argv.slice(1))];
     if (files.length) files.forEach(openPath);
     else createWindow();

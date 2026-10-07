@@ -69,8 +69,13 @@ A fast, good-looking Markdown editor and reader for **Windows and macOS**, with 
 **Light, dark and system themes**
 - Switch instantly, and Inkwell remembers your choice. Even the window controls follow the theme.
 
+**Always up to date**
+- Inkwell checks GitHub for new releases shortly after launch and every few hours, then downloads them in the background
+- When an update is ready, a small card offers **Restart**. If you'd rather not restart now, Windows installs it the next time you quit.
+- Check manually any time in **About** (`F1`), from the command palette, or on macOS via **Inkwell > Check for Updates…**
+
 **Private by design**
-- Fully offline: fonts and libraries are bundled. No accounts, no telemetry, and your files stay on your disk.
+- Fully offline for everything you write: fonts and libraries are bundled. No accounts, no telemetry, and your files stay on your disk. The only network request is the update check against GitHub.
 
 ## 📦 Install
 
@@ -92,6 +97,9 @@ Grab the latest version from the [**Releases page**](https://github.com/wl-lanki
    xattr -dr com.apple.quarantine /Applications/Inkwell.app
    ```
 3. **Make it your default Markdown app:** select any `.md` file in Finder, press **⌘ I** (Get Info), choose **Inkwell** under **Open with**, then click **Change All…**.
+
+> [!TIP]
+> Keep Inkwell in **Applications** so it can update itself. When it runs straight from the disk image, it can only point you to the download.
 
 ## ⌨️ Keyboard shortcuts
 
@@ -122,7 +130,9 @@ npm run dist:mac             # macOS universal .dmg + .zip (run this on a Mac)
 
 ### Releases
 
-Pushing a version tag (for example `v1.2.0`) starts the [Release workflow](.github/workflows/release.yml). It builds the Windows installer and a universal macOS app on GitHub's runners, smoke-tests the Mac build, and attaches everything to the GitHub release.
+Pushing a version tag (for example `v1.2.0`) starts the [Release workflow](.github/workflows/release.yml). It builds the Windows installer and a universal macOS app on GitHub's runners, smoke-tests the Mac build, and attaches everything to the GitHub release, including the `latest.yml` update metadata. Installed copies pick up the release automatically.
+
+Updates come from GitHub releases. Windows uses [electron-updater](https://www.electron.build/auto-update). macOS uses a small built-in updater (`electron/updater.js`), because Apple's Squirrel updater only accepts Developer ID signed apps: it downloads the universal `.zip`, verifies its version, and swaps the app bundle after Inkwell quits. The [Update E2E workflow](.github/workflows/update-e2e.yml) installs an old build on both platforms and checks that it updates itself to the latest release.
 
 > [!TIP]
 > If npm blocks Electron's install script, run `node node_modules/electron/install.js` once.
@@ -137,6 +147,7 @@ You can also open `index.html` in Chrome or Edge without Electron. In that mode 
 | --- | --- |
 | `index.html` · `styles.css` · `app.js` | The UI: editor, preview, outline, palette, themes |
 | `electron/main.js` | Windows, file associations, file I/O, close prompts, file watching, PDF export, macOS menu |
+| `electron/updater.js` | Automatic updates from GitHub releases (Windows and macOS) |
 | `electron/preload.js` | The narrow, context-isolated bridge (`window.inkwellNative`) |
 | `scripts/build-icon.js` | Renders the SVG icons to `.ico` and `.icns` (`build/icon-mac.svg` follows the macOS icon grid) |
 | `vendor/` | [marked](https://marked.js.org), [DOMPurify](https://github.com/cure53/DOMPurify), [highlight.js](https://highlightjs.org) |

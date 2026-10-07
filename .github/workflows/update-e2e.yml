@@ -1,0 +1,101 @@
+name: Update E2E
+
+# Installs a deliberately old build (0.0.1) and checks that it updates itself
+# to the latest published release, on Windows and macOS.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Self-update (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build version 0.0.1
+        shell: bash
+        run: |
+          npm version 0.0.1 --no-git-tag-version --allow-same-version
+          if [ "$RUNNER_OS" = "macOS" ]; then npx electron-builder --mac zip --universal --publish never; else npm run dist:win; fi
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Expected version
+        id: latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "version=$(gh release view --repo ${{ github.repository }} --json tagName --jq .tagName | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
+      - name: Install 0.0.1 and let it update itself (macOS)
+        if: runner.os == 'macOS'
+        env:
+          EXPECTED: ${{ steps.latest.outputs.version }}
+        run: |
+          ditto -x -k dist/Inkwell-0.0.1-mac-universal.zip /Applications
+          plist=/Applications/Inkwell.app/Contents/Info.plist
+          echo "Installed: $(plutil -extract CFBundleShortVersionString raw $plist)"
+          INKWELL_UPDATE_SMOKE=1 /Applications/Inkwell.app/Contents/MacOS/Inkwell > updater.log 2>&1 &
+          for i in $(seq 1 90); do
+            v=$(plutil -extract CFBundleShortVersionString raw $plist 2>/dev/null || echo none)
+            if [ "$v" = "$EXPECTED" ]; then break; fi
+            sleep 2
+          done
+          grep '\[updater\]' updater.log || true
+          sleep 8
+          screencapture -x updated-macos.png || true
+          echo "Now: $v (expected $EXPECTED)"
+          pgrep -fl "Inkwell.app/Contents/MacOS/Inkwell" || { echo "Updated app is not running"; exit 1; }
+          test "$v" = "$EXPECTED"
+
+      - name: Install 0.0.1 and let it update itself (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED: ${{ steps.latest.outputs.version }}
+        run: |
+          Start-Process -FilePath "dist\Inkwell-Setup-0.0.1.exe" -ArgumentList '/S' -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\Inkwell\Inkwell.exe"
+          "Installed: " + (Get-Item $exe).VersionInfo.FileVersion
+          $env:INKWELL_UPDATE_SMOKE = '1'
+          Start-Process -FilePath $exe -RedirectStandardOutput updater.log -RedirectStandardError updater.err
+          $v = ''
+          foreach ($i in 1..120) {
+            Start-Sleep -Seconds 2
+            try { $v = (Get-Item $exe -ErrorAction Stop).VersionInfo.FileVersion } catch { continue }
+            if ($v -eq $env:EXPECTED) { break }
+          }
+          Get-Content updater.log -ErrorAction SilentlyContinue | Select-String 'updater'
+          Start-Sleep -Seconds 8
+          "Now: $v (expected $env:EXPECTED)"
+          if (-not (Get-Process Inkwell -ErrorAction SilentlyContinue)) { throw 'Updated app is not running' }
+          if ($v -ne $env:EXPECTED) { throw "Update failed: $v" }
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: update-e2e-${{ matrix.name }}
+          path: |
+            updated-macos.png
+            updater.log
+            updater.err
+          if-no-files-found: ignore

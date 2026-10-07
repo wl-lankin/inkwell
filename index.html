@@ -202,6 +202,12 @@
 
         <dl class="about-facts" id="about-facts"></dl>
 
+        <div class="update-row native-only" id="update-row">
+          <span class="update-dot" aria-hidden="true"></span>
+          <span class="update-text" id="update-text">Automatic updates are on</span>
+          <button class="btn btn-small" id="update-action">Check now</button>
+        </div>
+
         <div class="about-actions">
           <a class="btn btn-primary" href="https://wolfgang-linz.de" target="_blank" rel="noopener noreferrer"><svg><use href="#i-globe"/></svg>Website</a>
           <a class="btn" href="https://github.com/wl-lankin/inkwell" target="_blank" rel="noopener noreferrer"><svg><use href="#i-github"/></svg>Source on GitHub</a>
@@ -213,6 +219,19 @@
       </div>
 
       <footer class="about-footer">MIT License &middot; &copy; <span id="about-year">2026</span> Wolfgang Linz</footer>
+    </div>
+  </div>
+
+  <div class="update-card" id="update-card" role="status" aria-live="polite" hidden>
+    <img src="icon.svg" alt="" width="36" height="36">
+    <div class="update-card-body">
+      <strong id="update-card-title">Update available</strong>
+      <span id="update-card-text"></span>
+      <div class="update-progress" id="update-progress" hidden><span></span></div>
+    </div>
+    <div class="update-card-actions">
+      <button class="btn btn-primary btn-small" id="update-card-primary">Restart</button>
+      <button class="icon-btn" id="update-card-close" aria-label="Dismiss"><svg><use href="#i-x"/></svg></button>
     </div>
   </div>
 

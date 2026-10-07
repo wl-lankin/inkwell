@@ -1189,6 +1189,74 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
   commandById.about = commands[commands.length - 2];
   commandById.shortcuts = commands[commands.length - 1];
 
+  /* ---------- Updates ---------- */
+  const updateCard = $('#update-card');
+  const updateRow = $('#update-row');
+  let updateState = { status: 'idle' };
+  let dismissedFor = null;
+
+  function describeUpdate(s) {
+    switch (s.status) {
+      case 'checking': return { row: 'Checking for updates…', action: null };
+      case 'none': return { row: `You're up to date (${s.current})`, action: 'Check now' };
+      case 'downloading': return { row: `Downloading Inkwell ${s.version}… ${s.percent || 0}%`, action: null };
+      case 'ready': return { row: `Inkwell ${s.version} is ready to install`, action: 'Restart to update' };
+      case 'manual': return { row: s.message || `Inkwell ${s.version} is available`, action: 'Download' };
+      case 'error': return { row: s.message || 'Couldn\'t check for updates', action: 'Try again' };
+      case 'unsupported': return { row: s.message || 'Automatic updates are off', action: null };
+      default: return { row: 'Automatic updates are on', action: 'Check now' };
+    }
+  }
+
+  function renderUpdate(s) {
+    updateState = s;
+    const { row, action } = describeUpdate(s);
+    updateRow.dataset.status = s.status;
+    $('#update-text').textContent = row;
+    const btn = $('#update-action');
+    btn.hidden = !action;
+    if (action) btn.textContent = action;
+
+    // The floating card appears for downloads and finished updates, unless dismissed for this version.
+    const show = ['downloading', 'ready', 'manual'].includes(s.status) && dismissedFor !== `${s.status}:${s.version}`;
+    updateCard.hidden = !show;
+    if (!show) return;
+    $('#update-card-title').textContent = s.status === 'downloading' ? `Downloading Inkwell ${s.version}` : `Inkwell ${s.version} is available`;
+    $('#update-card-text').textContent = s.status === 'downloading'
+      ? 'You can keep working. Inkwell will let you know when it\'s ready.'
+      : s.status === 'ready' ? 'Restart to finish updating. Your files stay as they are.' : (s.message || 'Download it from GitHub.');
+    const bar = $('#update-progress');
+    bar.hidden = s.status !== 'downloading';
+    bar.firstElementChild.style.width = `${s.percent || 0}%`;
+    const primary = $('#update-card-primary');
+    primary.hidden = s.status === 'downloading';
+    primary.textContent = s.status === 'ready' ? 'Restart' : 'Download';
+  }
+
+  async function installUpdate() {
+    // Save first, so the restart never asks about unsaved changes mid-update.
+    if (updateState.status === 'ready' && state.dirty && state.handle) await save();
+    native.installUpdate();
+  }
+
+  function updateAction() {
+    if (updateState.status === 'ready' || updateState.status === 'manual') installUpdate();
+    else native.checkForUpdates();
+  }
+
+  if (native && native.onUpdateState) {
+    native.onUpdateState(renderUpdate);
+    native.getUpdateState().then(renderUpdate);
+    $('#update-action').addEventListener('click', updateAction);
+    $('#update-card-primary').addEventListener('click', installUpdate);
+    $('#update-card-close').addEventListener('click', () => {
+      dismissedFor = `${updateState.status}:${updateState.version}`;
+      updateCard.hidden = true;
+    });
+    commands.push({ id: 'checkUpdates', label: 'Check for updates', icon: 'download', run: () => { native.checkForUpdates(); openAbout(); } });
+    commandById.checkUpdates = commands[commands.length - 1];
+  }
+
   /* ---------- Global shortcuts ---------- */
   window.addEventListener('keydown', (e) => {
     const mod = e.ctrlKey || e.metaKey;
