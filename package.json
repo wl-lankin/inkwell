@@ -1,0 +1,74 @@
+{
+  "name": "inkwell",
+  "productName": "Inkwell",
+  "version": "1.0.0",
+  "description": "A calm, fast Markdown reader and writer.",
+  "author": {
+    "name": "Wolfgang Linz",
+    "url": "https://wolfgang-linz.de"
+  },
+  "homepage": "https://github.com/wl-lankin/inkwell",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wl-lankin/inkwell.git"
+  },
+  "bugs": "https://github.com/wl-lankin/inkwell/issues",
+  "keywords": ["markdown", "editor", "reader", "electron", "windows", "desktop"],
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "electron scripts/build-icon.js",
+    "dist": "npm run icon && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0"
+  },
+  "devDependencies": {
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "io.inkwell.app",
+    "productName": "Inkwell",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "welcome.js",
+      "theme-init.js",
+      "build/icon.png",
+      "icon.svg",
+      "vendor/**",
+      "electron/**",
+      "node_modules/@fontsource-variable/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "artifactName": "Inkwell-Setup-${version}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Inkwell",
+      "runAfterFinish": true
+    },
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mkd", "mkdn"],
+        "name": "Inkwell.Markdown",
+        "description": "Markdown document",
+        "role": "Editor",
+        "icon": "build/file-icon.ico"
+      }
+    ]
+  }
+}

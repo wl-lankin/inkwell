@@ -1,0 +1,21 @@
+'use strict';
+
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+contextBridge.exposeInMainWorld('inkwellNative', {
+  getAppInfo: () => ipcRenderer.invoke('app-info'),
+  getInitialFile: () => ipcRenderer.invoke('initial-file'),
+  openDialog: () => ipcRenderer.invoke('open-dialog'),
+  readFile: (path) => ipcRenderer.invoke('read-file', path),
+  writeFile: (path, content) => ipcRenderer.invoke('write-file', path, content),
+  saveDialog: (suggestedName) => ipcRenderer.invoke('save-dialog', suggestedName),
+  exportPdf: (suggestedName) => ipcRenderer.invoke('export-pdf', suggestedName),
+  setDocState: (state) => ipcRenderer.send('doc-state', state),
+  setTheme: (choice) => ipcRenderer.send('set-theme', choice),
+  newWindow: (path) => ipcRenderer.send('new-window', path || null),
+  closeWindow: () => ipcRenderer.send('close-window'),
+  showInFolder: (path) => ipcRenderer.send('show-in-folder', path),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  onSaveAndClose: (cb) => ipcRenderer.on('save-and-close', () => cb()),
+  onFileChanged: (cb) => ipcRenderer.on('file-changed', (_e, data) => cb(data)),
+});
