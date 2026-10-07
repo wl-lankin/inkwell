@@ -6,7 +6,7 @@
 
 **A calm place to read and write Markdown.**
 
-A fast, good-looking Markdown editor and reader for **Windows and macOS**, with its own window, light and dark themes, and double-click to open your `.md` files.
+A fast, good-looking Markdown editor and reader for **Windows and macOS**.
 
 <p><a href="https://github.com/wl-lankin/inkwell/releases/latest"><img src="https://img.shields.io/github/v/release/wl-lankin/inkwell?style=flat-square&color=3346d3" alt="Latest release"></a>&nbsp;<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3346d3?style=flat-square" alt="License: MIT"></a>&nbsp;<img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f1c17?style=flat-square" alt="Platform: Windows | macOS">&nbsp;<img src="https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron 44"></p>
 
