@@ -8,10 +8,7 @@
 
 A fast, good-looking Markdown editor and reader for **Windows and macOS**, with its own window, light and dark themes, and double-click to open your `.md` files.
 
-[![Latest release](https://img.shields.io/github/v/release/wl-lankin/inkwell?style=flat-square&color=3346d3)](https://github.com/wl-lankin/inkwell/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-3346d3?style=flat-square)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f1c17?style=flat-square)
-![Electron](https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white)
+<p><a href="https://github.com/wl-lankin/inkwell/releases/latest"><img src="https://img.shields.io/github/v/release/wl-lankin/inkwell?style=flat-square&color=3346d3" alt="Latest release"></a>&nbsp;<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3346d3?style=flat-square" alt="License: MIT"></a>&nbsp;<img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1f1c17?style=flat-square" alt="Platform: Windows | macOS">&nbsp;<img src="https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron 44"></p>
 
 [**Download for Windows**](https://github.com/wl-lankin/inkwell/releases/latest) · [**Download for macOS**](https://github.com/wl-lankin/inkwell/releases/latest) · [Features](#-features) · [Shortcuts](#%EF%B8%8F-keyboard-shortcuts) · [Build from source](#%EF%B8%8F-build-from-source)
 
