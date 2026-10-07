@@ -489,7 +489,9 @@ kbd {
 .prose th { font-weight: 600; background: var(--surface-2); }
 .prose tr:last-child td { border-bottom: 0; }
 .prose tbody tr:hover td { background: var(--accent-soft); }
-.prose img { max-width: 100%; height: auto; border-radius: var(--radius); display: block; margin: 0 auto; }
+/* Images flow inline (e.g. a row of badges); an image standing alone in its paragraph becomes a centered figure. */
+.prose img { max-width: 100%; height: auto; vertical-align: middle; }
+.prose > img, .prose p > img:only-child, .prose p > a:only-child > img:only-child { display: block; margin: 0 auto; border-radius: var(--radius); }
 .prose del { color: var(--muted); }
 .prose details { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5em 1em; margin-bottom: 1.1em; }
 .prose summary { cursor: pointer; font-weight: 600; }

@@ -16,7 +16,7 @@
   const native = window.inkwellNative || null;
   const isMac = !!native && native.platform === 'darwin';
   // Shortcut labels are written Windows-style ("Ctrl Shift S") and translated for macOS.
-  const keyLabel = (s) => (isMac ? s.replace(/Ctrl/g, '⌘').replace(/Alt/g, '⌥').replace(/Shift/g, '⇧') : s);
+  const keyLabel = (s) => (isMac ? s.replace(/\bCtrl\b/g, '\u2318').replace(/\bAlt\b/g, '\u2325').replace(/\bShift\b/g, '\u21e7') : s);
   const welcomeText = () => (isMac
     ? window.INKWELL_WELCOME.replace(/`Ctrl (?!H`)/g, '`Cmd ').replace(/Ctrl ([0-9OSNPB.])/g, 'Cmd $1').replace(/Explorer/g, 'Finder')
     : window.INKWELL_WELCOME);
@@ -91,7 +91,7 @@
   function updateMeta() {
     const dirty = state.dirty;
     app.classList.toggle('dirty', dirty);
-    document.title = (dirty ? '• ' : '') + docName.value + ' - Inkwell';
+    document.title = (dirty ? '\u2022 ' : '') + docName.value + ' - Inkwell';
     const where = state.handle ? (state.handle.path || state.handle.name) : (native ? 'Not saved yet' : 'Local draft');
     $('#st-file').textContent = where;
     $('#st-file').title = where;
@@ -591,7 +591,7 @@
   }
 
   /* ---------- Files ---------- */
-  const normalize = (text) => text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const normalize = (text) => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const baseName = (p) => p.split(/[\\/]/).pop();
 
   async function confirmDiscard() {
@@ -1102,7 +1102,7 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     ]],
     ['Formatting', [
       ['Bold', 'Ctrl B'], ['Italic', 'Ctrl I'], ['Strikethrough', 'Ctrl Shift X'],
-      ['Link', 'Ctrl K'], ['Inline code', 'Ctrl E'], ['Cycle heading', isMac ? '⌃ H' : 'Ctrl H'],
+      ['Link', 'Ctrl K'], ['Inline code', 'Ctrl E'], ['Cycle heading', isMac ? '\u2303 H' : 'Ctrl H'],
       ['Indent / outdent list', 'Tab / Shift Tab'],
     ]],
   ];
@@ -1223,8 +1223,8 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
   /* ---------- Boot ---------- */
   async function boot() {
     if (isMac) {
-      for (const el of $('[title]')) el.title = keyLabel(el.title).replace(/⌘+H/, '⌃+H');
-      for (const el of $('#more-menu kbd')) el.textContent = keyLabel(el.textContent);
+      for (const el of $$('[title]')) el.title = keyLabel(el.title).replace(/\u2318\+H\b/, '\u2303+H');
+      for (const el of $$('#more-menu kbd')) el.textContent = keyLabel(el.textContent);
       const finder = $('#more-menu [data-cmd="showInFolder"]');
       if (finder) finder.lastChild.textContent = 'Show in Finder';
     }
