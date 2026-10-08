@@ -48,13 +48,28 @@ A fast, good-looking Markdown editor and reader for **Windows and macOS**.
 - Relative images and links to other `.md` files just work
 
 **Writing comfort**
-- Formatting toolbar and shortcuts for bold, italic, links, code, headings, lists, tasks, tables and dividers
-- Lists continue on Enter, Tab and Shift+Tab indent, and pasting a URL over selected text makes a link
+- Formatting toolbar and shortcuts for bold, italic, highlight, links, code, headings, lists, tasks, math and dividers
+- **Find and replace** (`Ctrl F`) with match case, whole word and regular expressions. Matches light up in the editor and the preview.
+- Brackets and quotes close themselves, and typing `*`, `_` or `~` over selected text wraps it
+- **Tables that format themselves**: a size picker to insert one, and `Tab` / `Shift Tab` jump between cells while the columns line up
+- **Paste from the web as Markdown**: headings, lists, links and tables from browsers, Word, Google Docs or Excel. `Ctrl Shift V` pastes plain text.
+- **Paste or drop images** and they're saved into an `assets` folder next to your document, with the link written for you
+- Move lines with `Alt ↑` / `Alt ↓`, duplicate with `Shift Alt ↓`, and lists continue on Enter
+- Spell check with suggestions on right-click
+- Typewriter scrolling, autosave and adjustable text size in **Settings** (`Ctrl ,`)
 - Tick task-list checkboxes **in the preview**, and the Markdown source updates
-- Outline sidebar that tracks where you are, plus recent files
+
+**Find your way around**
+- **Files** panel with the Markdown files and folders next to your document, or any folder you open
+- Outline that tracks where you are, plus recent files
+- Reading progress bar, click-to-zoom images, and an adjustable reading width and typeface
 
 **Beautiful output**
 - GitHub-flavored Markdown with syntax highlighting that adapts to the theme
+- **Math** with KaTeX: `$inline$`, `$$display$$` and ` ```math ` blocks
+- **Diagrams** with Mermaid: flowcharts, sequence diagrams, Gantt charts and more, in light and dark
+- **Callouts**: GitHub alerts (`> [!NOTE]`) and Obsidian callouts, including folding ones (`> [!tip]-`)
+- Footnotes, `==highlights==`, `:emoji:` shortcodes, a `[TOC]` table of contents, and YAML front matter shown as a properties card
 - Carefully set typography: *Newsreader* for reading, *JetBrains Mono* for writing, *Geist* for the interface
 - Export to **PDF** or **HTML**, copy as rich text, or print
 
@@ -95,16 +110,25 @@ Grab the latest version from the [**Releases page**](https://github.com/wl-lanki
 
 ## ⌨️ Keyboard shortcuts
 
-On macOS, use **⌘** wherever the table says `Ctrl`. The one exception is **Cycle heading**, which is **⌃ H** on a Mac, because ⌘ H hides apps there.
+On macOS, use **⌘** wherever the tables say `Ctrl` and **⌥** for `Alt`. The one exception is **Cycle heading**, which is **⌃ H** on a Mac, because ⌘ H hides apps there. Zoom lives in the **View** menu.
 
 | Files | | View | | Formatting | |
 | --- | --- | --- | --- | --- | --- |
 | Open | `Ctrl O` | Write / Split / Read | `Ctrl 1` `2` `3` | Bold | `Ctrl B` |
 | Save | `Ctrl S` | Focus mode | `Ctrl .` | Italic | `Ctrl I` |
-| Save as | `Ctrl Shift S` | Sidebar | `Ctrl Shift B` | Link | `Ctrl K` |
-| New window | `Ctrl N` | Command palette | `Ctrl Shift P` | Inline code | `Ctrl E` |
-| Close window | `Ctrl W` | About & shortcuts | `F1` | Cycle heading | `Ctrl H` |
-| New document | `Ctrl Alt N` | | | Strikethrough | `Ctrl Shift X` |
+| Save as | `Ctrl Shift S` | Sidebar | `Ctrl Shift B` | Highlight | `Ctrl Shift H` |
+| New window | `Ctrl N` | Command palette | `Ctrl Shift P` | Link | `Ctrl K` |
+| Close window | `Ctrl W` | Settings | `Ctrl ,` | Inline code | `Ctrl E` |
+| New document | `Ctrl Alt N` | About & shortcuts | `F1` | Math | `Ctrl Shift M` |
+| | | Zoom (Windows) | `Ctrl =` `-` `0` | Cycle heading | `Ctrl H` |
+| | | | | Strikethrough | `Ctrl Shift X` |
+
+| Find | | Editing | |
+| --- | --- | --- | --- |
+| Find | `Ctrl F` | Next / previous table cell | `Tab` / `Shift Tab` |
+| Find and replace | `Ctrl Alt F` | Move line up / down | `Alt ↑` / `Alt ↓` |
+| Next / previous match | `Enter` / `Shift Enter` or `F3` | Duplicate line | `Shift Alt ↓` |
+| Replace all | `Ctrl Enter` in the replace field | Paste as plain text | `Ctrl Shift V` |
 
 ## 🛠️ Build from source
 
@@ -131,6 +155,8 @@ Updates come from GitHub releases. Windows uses [electron-updater](https://www.e
 
 `npm run icon` renders the app and file icons from SVG into `.ico` (Windows) and `.icns` (macOS). The installers are packaged with `electron-builder`.
 
+`npm run vendor` copies the browser builds of KaTeX, Mermaid and Turndown into `vendor/` and regenerates the emoji list, after you update those packages. `npm run welcome` rebuilds the first-launch guide (`welcome.js`) from [`docs/Welcome.md`](docs/Welcome.md).
+
 You can also open `index.html` in Chrome or Edge without Electron. In that mode Inkwell uses the File System Access API and autosaves drafts locally.
 
 ### Code signing (macOS)
@@ -156,11 +182,12 @@ To check the setup without publishing anything, run the Release workflow manuall
 | `electron/updater.js` | Automatic updates from GitHub releases (Windows and macOS) |
 | `electron/preload.js` | The narrow, context-isolated bridge (`window.inkwellNative`) |
 | `scripts/build-icon.js` | Renders the SVG icons to `.ico` and `.icns` (`build/icon-mac.svg` follows the macOS icon grid) |
-| `vendor/` | [marked](https://marked.js.org), [DOMPurify](https://github.com/cure53/DOMPurify), [highlight.js](https://highlightjs.org) |
+| `scripts/vendor.mjs` · `scripts/welcome.mjs` | Refresh the bundled libraries and the welcome guide |
+| `vendor/` | [marked](https://marked.js.org), [DOMPurify](https://github.com/cure53/DOMPurify), [highlight.js](https://highlightjs.org), [KaTeX](https://katex.org), [Mermaid](https://mermaid.js.org), [Turndown](https://github.com/mixmark-io/turndown), [gemoji](https://github.com/wooorm/gemoji). KaTeX and Mermaid load only when a document uses them. |
 
 ### Security
 
-Markdown is rendered with `marked` and sanitized with DOMPurify before it reaches the page. The renderer runs sandboxed with context isolation and a strict Content Security Policy, and links open in your default browser.
+Markdown is rendered with `marked` and sanitized with DOMPurify before it reaches the page. Mermaid runs in strict mode and its SVG output is sanitized too, and pasted HTML is sanitized before it's converted. The renderer runs sandboxed with context isolation and a strict Content Security Policy, and links open in your default browser. Pasted images can only be written into the `assets` folder next to the open document.
 
 ## 📄 License
 

@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('inkwellNative', {
   platform: process.platform,
@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('inkwellNative', {
   closeWindow: () => ipcRenderer.send('close-window'),
   showInFolder: (path) => ipcRenderer.send('show-in-folder', path),
   pathForFile: (file) => webUtils.getPathForFile(file),
+  openFolderDialog: () => ipcRenderer.invoke('open-folder-dialog'),
+  listDir: (dir) => ipcRenderer.invoke('list-dir', dir),
+  saveAsset: (name, bytes) => ipcRenderer.invoke('save-asset', name, bytes),
+  setZoom: (level) => webFrame.setZoomLevel(level),
   onSaveAndClose: (cb) => ipcRenderer.on('save-and-close', () => cb()),
   onFileChanged: (cb) => ipcRenderer.on('file-changed', (_e, data) => cb(data)),
 });

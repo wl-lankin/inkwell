@@ -18,7 +18,7 @@
   // Shortcut labels are written Windows-style ("Ctrl Shift S") and translated for macOS.
   const keyLabel = (s) => (isMac ? s.replace(/\bCtrl\b/g, '\u2318').replace(/\bAlt\b/g, '\u2325').replace(/\bShift\b/g, '\u21e7') : s);
   const welcomeText = () => (isMac
-    ? window.INKWELL_WELCOME.replace(/`Ctrl (?!H`)/g, '`Cmd ').replace(/Ctrl ([0-9OSNPB.])/g, 'Cmd $1').replace(/Explorer/g, 'Finder')
+    ? window.INKWELL_WELCOME.replace(/`Ctrl (?!H`)/g, '`Cmd ').replace(/Ctrl ([0-9OSNPB.])/g, 'Cmd $1').replace(/`Alt /g, '`Option ').replace(/Explorer/g, 'Finder')
     : window.INKWELL_WELCOME);
   const hasFsAccess = 'showOpenFilePicker' in window;
   const MD_TYPES = [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.mdown', '.mkd'], 'text/plain': ['.txt'] } }];
@@ -32,6 +32,62 @@
       try { localStorage.setItem('inkwell.' + key, JSON.stringify(value)); } catch (e) { /* storage unavailable */ }
     },
   };
+
+  /* ---------- Settings ---------- */
+  const SETTING_DEFAULTS = {
+    editorSize: 14.5,
+    readSize: 19,
+    readWidth: 'normal',
+    readFont: 'serif',
+    spellcheck: true,
+    autoPair: true,
+    smartPaste: true,
+    typewriter: false,
+    autosave: false,
+  };
+  const READ_WIDTHS = { narrow: '620px', normal: '720px', wide: '900px' };
+  const settings = { ...SETTING_DEFAULTS, ...ls.get('settings', {}) };
+
+  function applySettings() {
+    const root = document.documentElement.style;
+    root.setProperty('--editor-size', settings.editorSize + 'px');
+    root.setProperty('--read-size', settings.readSize + 'px');
+    root.setProperty('--read-width', READ_WIDTHS[settings.readWidth] || READ_WIDTHS.normal);
+    app.classList.toggle('read-sans', settings.readFont === 'sans');
+    app.classList.toggle('typewriter', !!settings.typewriter);
+    editor.spellcheck = !!settings.spellcheck;
+    syncMap = null;
+  }
+
+  function setSetting(key, value) {
+    settings[key] = value;
+    ls.set('settings', settings);
+    applySettings();
+    renderSettingsForm();
+  }
+
+  /* ---------- Lazy-loaded libraries ---------- */
+  const loaded = new Map();
+  function loadScript(src) {
+    if (!loaded.has(src)) {
+      loaded.set(src, new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => { loaded.delete(src); reject(new Error('Could not load ' + src)); };
+        document.head.appendChild(s);
+      }));
+    }
+    return loaded.get(src);
+  }
+  function loadStyle(href) {
+    if (!loaded.has(href)) {
+      const l = Object.assign(document.createElement('link'), { rel: 'stylesheet', href });
+      document.head.appendChild(l);
+      loaded.set(href, Promise.resolve());
+    }
+  }
+  const isDark = () => getComputedStyle(document.documentElement).colorScheme === 'dark';
 
   const idb = (() => {
     let dbPromise;
@@ -77,6 +133,7 @@
     render();
     persistDraft();
     updateMeta();
+    refreshFiles();
   }
 
   let draftTimer;
@@ -124,8 +181,117 @@
     return n ? `${base}-${n}` : base;
   }
 
+  // Math ($inline$, $$display$$, ```math). KaTeX loads on first use; until then the TeX shows as code.
+  const KATEX = 'vendor/katex/katex.min.js';
+  function mathHtml(tex, display) {
+    if (!window.katex) {
+      loadStyle('vendor/katex/katex.min.css');
+      loadScript(KATEX).then(scheduleRender, () => {});
+      return display ? `<pre class="math-pending"><code>${escapeHtml(tex)}</code></pre>` : `<code class="math-pending">${escapeHtml(tex)}</code>`;
+    }
+    const html = katex.renderToString(tex, { displayMode: display, throwOnError: false, strict: 'ignore', output: 'htmlAndMathml' });
+    return display ? `<div class="math-block">${html}</div>\n` : `<span class="math-inline">${html}</span>`;
+  }
+
+  // Diagrams (```mermaid) render asynchronously into placeholders after each preview update.
+  let diagramSources = [];
+
+  // Footnotes ([^1] and [^1]: text) are collected while parsing and appended at the end.
+  const footnotes = { defs: new Map(), order: [], refs: new Map() };
+  const fnId = (id) => id.replace(/[^\p{L}\p{N}_-]/gu, '_');
+
+  const CALLOUT_KINDS = {
+    note: 'note', info: 'note', todo: 'note',
+    tip: 'tip', hint: 'tip', success: 'tip', check: 'tip', done: 'tip',
+    important: 'important', abstract: 'important', summary: 'important', tldr: 'important', example: 'important', question: 'important', help: 'important', faq: 'important',
+    warning: 'warning', attention: 'warning', caution: 'caution', danger: 'caution', error: 'caution', bug: 'caution', failure: 'caution', fail: 'caution', missing: 'caution',
+    quote: 'quote', cite: 'quote',
+  };
+  const EMOJI = window.INKWELL_EMOJI || {};
+
   marked.use({
     gfm: true,
+    extensions: [
+      {
+        name: 'mathBlock',
+        level: 'block',
+        start(src) { const m = /(^|\n)\$\$/.exec(src); return m ? m.index + m[1].length : undefined; },
+        tokenizer(src) {
+          const m = /^\$\$([\s\S]+?)\$\$[ \t]*(?:\n|$)/.exec(src);
+          if (m) return { type: 'mathBlock', raw: m[0], text: m[1].trim() };
+        },
+        renderer(t) { return mathHtml(t.text, true); },
+      },
+      {
+        name: 'mathInline',
+        level: 'inline',
+        start(src) { const i = src.indexOf('$'); return i < 0 ? undefined : i; },
+        tokenizer(src) {
+          let m = /^\$\$(?!\s)([^$]+?)\$\$/.exec(src);
+          if (m) return { type: 'mathInline', raw: m[0], text: m[1], display: true };
+          m = /^\$(?![\s$])((?:\\.|[^\\$\n])+?)(?<!\s)\$(?!\d)/.exec(src);
+          if (m) return { type: 'mathInline', raw: m[0], text: m[1], display: false };
+        },
+        renderer(t) { return mathHtml(t.text, t.display); },
+      },
+      {
+        name: 'toc',
+        level: 'block',
+        start(src) { const m = /(^|\n)\[toc\]/i.exec(src); return m ? m.index + m[1].length : undefined; },
+        tokenizer(src) {
+          const m = /^\[toc\][ \t]*(?:\n|$)/i.exec(src);
+          if (m) return { type: 'toc', raw: m[0] };
+        },
+        renderer() { return '<nav class="toc" data-toc="1"></nav>\n'; },
+      },
+      {
+        name: 'footnoteDef',
+        level: 'block',
+        start(src) { const m = /(^|\n)\[\^[^\]\s]+\]:/.exec(src); return m ? m.index + m[1].length : undefined; },
+        tokenizer(src) {
+          const m = /^\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n(?:[ \t]{2,}|\t)[^\n]*)*)(?:\n|$)/.exec(src);
+          if (m) return { type: 'footnoteDef', raw: m[0], id: m[1], text: m[2].replace(/\n[ \t]+/g, ' ') };
+        },
+        renderer(t) { footnotes.defs.set(t.id, t.text); return ''; },
+      },
+      {
+        name: 'footnoteRef',
+        level: 'inline',
+        start(src) { const i = src.indexOf('[^'); return i < 0 ? undefined : i; },
+        tokenizer(src) {
+          const m = /^\[\^([^\]\s]+)\](?!:)/.exec(src);
+          if (m) return { type: 'footnoteRef', raw: m[0], id: m[1] };
+        },
+        renderer(t) {
+          let n = footnotes.order.indexOf(t.id);
+          if (n < 0) { footnotes.order.push(t.id); n = footnotes.order.length - 1; }
+          const count = (footnotes.refs.get(t.id) || 0) + 1;
+          footnotes.refs.set(t.id, count);
+          const id = fnId(t.id);
+          return `<sup class="fn-ref"><a href="#fn-${id}" id="fnref-${id}${count > 1 ? '-' + count : ''}">${n + 1}</a></sup>`;
+        },
+      },
+      {
+        name: 'mark',
+        level: 'inline',
+        start(src) { const i = src.indexOf('=='); return i < 0 ? undefined : i; },
+        tokenizer(src) {
+          const m = /^==(?=\S)([\s\S]*?\S)==(?!=)/.exec(src);
+          if (m) return { type: 'mark', raw: m[0], tokens: this.lexer.inlineTokens(m[1]) };
+        },
+        renderer(t) { return `<mark>${this.parser.parseInline(t.tokens)}</mark>`; },
+      },
+      {
+        name: 'emoji',
+        level: 'inline',
+        start(src) { const m = /:[a-z0-9_+-]+:/.exec(src); return m ? m.index : undefined; },
+        tokenizer(src) {
+          const m = /^:([a-z0-9_+-]+):/.exec(src);
+          if (m && Object.hasOwn(EMOJI, m[1])) return { type: 'emoji', raw: m[0], name: m[1] };
+        },
+        renderer(t) { return `<span class="emoji" title=":${t.name}:">${EMOJI[t.name]}</span>`; },
+      },
+    ],
     renderer: {
       heading(token) {
         const inner = this.parser.parseInline(token.tokens);
@@ -134,13 +300,75 @@
       },
       code(token) {
         const lang = (token.lang || '').trim().split(/\s+/)[0].toLowerCase();
+        if (lang === 'math' || lang === 'latex' || lang === 'tex') return mathHtml(token.text, true);
+        if (lang === 'mermaid') {
+          diagramSources.push(token.text);
+          return `<div class="diagram" data-diagram="${diagramSources.length - 1}"></div>\n`;
+        }
         const known = lang && hljs.getLanguage(lang);
         const body = known ? hljs.highlight(token.text, { language: lang, ignoreIllegals: true }).value : escapeHtml(token.text);
         const label = lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : '';
         return `<pre>${label}<code class="hljs${known ? ' language-' + lang : ''}">${body}</code></pre>\n`;
       },
+      // GitHub alerts and Obsidian callouts: > [!NOTE], > [!tip] Custom title, > [!warning]- (folded)
+      blockquote(token) {
+        const body = this.parser.parse(token.tokens);
+        const m = /^<p>\[!([A-Za-z]+)\]([+-]?)/.exec(body);
+        if (!m) return `<blockquote>\n${body}</blockquote>\n`;
+        const type = m[1].toLowerCase();
+        const kind = CALLOUT_KINDS[type] || 'note';
+        const after = body.slice(m[0].length);
+        const stop = after.search(/\n|<\/p>/);
+        const title = after.slice(0, stop).trim() || type.charAt(0).toUpperCase() + type.slice(1);
+        const tail = after.slice(stop);
+        const rest = tail.startsWith('\n') ? '<p>' + tail.slice(1) : tail.replace(/^<\/p>\n?/, '');
+        if (m[2]) {
+          return `<details class="callout" data-callout="${kind}"${m[2] === '+' ? ' open' : ''}><summary class="callout-title">${title}</summary><div class="callout-body">${rest}</div></details>\n`;
+        }
+        return `<div class="callout" data-callout="${kind}"><p class="callout-title">${title}</p><div class="callout-body">${rest}</div></div>\n`;
+      },
     },
   });
+
+  // YAML front matter at the very top is shown as a small properties card.
+  const FRONT_MATTER = /^---[ \t]*\n([\s\S]*?)\n(?:---|\.\.\.)[ \t]*(?:\n|$)/;
+  function frontMatterHtml(yaml) {
+    const rows = [];
+    let current = null;
+    for (const line of yaml.split('\n')) {
+      const item = /^\s+-\s+(.*)$/.exec(line);
+      const kv = /^([\w.-][\w .-]*?)\s*:\s*(.*)$/.exec(line);
+      if (item && current) current.values.push(item[1]);
+      else if (kv) {
+        let v = kv[2].trim();
+        const values = /^\[(.*)\]$/.test(v) ? v.slice(1, -1).split(',').map((s) => s.trim()).filter(Boolean) : (v ? [v] : []);
+        current = { key: kv[1], values, list: /^\[/.test(v) };
+        rows.push(current);
+      }
+    }
+    if (!rows.length) return '';
+    const unquote = (s) => s.replace(/^(['"])(.*)\1$/, '$2');
+    const cells = rows.map((r) => {
+      const isList = r.list || r.values.length > 1 || /^(tags|aliases|keywords|categories)$/i.test(r.key);
+      const val = isList
+        ? r.values.map((v) => `<span class="fm-chip">${escapeHtml(unquote(v))}</span>`).join('')
+        : escapeHtml(unquote(r.values.join(' ')));
+      return `<dt>${escapeHtml(r.key)}</dt><dd>${val || '<span class="fm-empty">-</span>'}</dd>`;
+    }).join('');
+    return `<div class="frontmatter"><dl>${cells}</dl></div>\n`;
+  }
+
+  function footnotesHtml() {
+    if (!footnotes.order.length && !footnotes.defs.size) return '';
+    const ids = [...footnotes.order, ...[...footnotes.defs.keys()].filter((k) => !footnotes.order.includes(k))];
+    const items = ids.map((key) => {
+      const id = fnId(key);
+      const text = footnotes.defs.has(key) ? marked.parseInline(footnotes.defs.get(key)) : `<em class="fn-missing">Missing footnote [^${escapeHtml(key)}]</em>`;
+      const back = footnotes.refs.has(key) ? ` <a href="#fnref-${id}" class="fn-back" aria-label="Back to text">↩︎</a>` : '';
+      return `<li id="fn-${id}"><p>${text}${back}</p></li>`;
+    }).join('');
+    return `<section class="footnotes"><ol>${items}</ol></section>\n`;
+  }
 
   let headingOffsets = [];
   let syncMap = null;
@@ -148,11 +376,16 @@
   function render() {
     const src = editor.value;
     slugCounts.clear();
-    const tokens = marked.lexer(src);
+    diagramSources = [];
+    footnotes.defs.clear();
+    footnotes.order = [];
+    footnotes.refs.clear();
+    const fm = FRONT_MATTER.exec(src);
+    const tokens = marked.lexer(fm ? src.slice(fm[0].length) : src);
 
     // Locate top-level headings in the source so editor and preview can be aligned.
     headingOffsets = [];
-    let cursor = 0;
+    let cursor = fm ? fm[0].length : 0;
     for (const t of tokens) {
       if (!t.raw) continue;
       const at = src.indexOf(t.raw, cursor);
@@ -161,7 +394,8 @@
       cursor = at + t.raw.length;
     }
 
-    const html = marked.parser(tokens);
+    const body = marked.parser(tokens);
+    const html = (fm ? frontMatterHtml(fm[1]) : '') + body + footnotesHtml();
     preview.innerHTML = DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
 
     for (const box of $$('input[type="checkbox"]', preview)) box.removeAttribute('disabled');
@@ -185,9 +419,91 @@
       pre.appendChild(btn);
     }
 
+    fillToc();
+    fillDiagrams();
     syncMap = null;
     buildOutline();
     updateStats();
+    if (find.open) refreshFind(false);
+  }
+
+  function fillToc() {
+    const tocs = $$('nav.toc', preview);
+    if (!tocs.length) return;
+    let heads = previewHeadings().filter((h) => Number(h.tagName[1]) <= 4);
+    // A single H1 is the document title, so the contents start below it.
+    const shift = heads.filter((h) => h.tagName === 'H1').length === 1 ? 1 : 0;
+    if (shift) heads = heads.filter((h) => h.tagName !== 'H1');
+    for (const nav of tocs) {
+      const ul = document.createElement('ul');
+      for (const h of heads) {
+        const li = document.createElement('li');
+        li.dataset.level = Number(h.tagName[1]) - shift;
+        const a = document.createElement('a');
+        a.href = '#' + h.id;
+        a.textContent = h.textContent.replace(/^#/, '').trim();
+        li.appendChild(a);
+        ul.appendChild(li);
+      }
+      nav.replaceChildren(ul);
+    }
+  }
+
+  const diagramCache = new Map();
+  const diagramPending = new Set();
+  let mermaidTheme = null;
+  let diagramSeq = 0;
+
+  function fillDiagrams() {
+    const nodes = $$('.diagram[data-diagram]', preview);
+    if (!nodes.length) return;
+    const theme = isDark() ? 'dark' : 'neutral';
+    const todo = [];
+    for (const node of nodes) {
+      const src = diagramSources[Number(node.dataset.diagram)];
+      const key = theme + '\n' + src;
+      const hit = diagramCache.get(key);
+      if (hit) {
+        node.classList.remove('diagram-loading');
+        if (hit.svg) node.innerHTML = hit.svg;
+        else { node.classList.add('diagram-error'); node.textContent = 'Diagram error: ' + hit.error; }
+      } else {
+        node.classList.add('diagram-loading');
+        node.textContent = 'Rendering diagram…';
+        if (!diagramPending.has(key)) { diagramPending.add(key); todo.push({ key, src }); }
+      }
+    }
+    if (todo.length) renderDiagrams(todo, theme);
+  }
+
+  async function renderDiagrams(todo, theme) {
+    try {
+      await loadScript('vendor/mermaid.min.js');
+    } catch (e) {
+      todo.forEach(({ key }) => { diagramPending.delete(key); diagramCache.set(key, { error: 'the diagram library could not be loaded' }); });
+      fillDiagrams();
+      return;
+    }
+    if (mermaidTheme !== theme) {
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme, suppressErrorRendering: true, htmlLabels: false, flowchart: { htmlLabels: false }, fontFamily: getComputedStyle(document.body).fontFamily });
+      mermaidTheme = theme;
+    }
+    for (const { key, src } of todo) {
+      const id = 'inkwell-mmd-' + (++diagramSeq);
+      try {
+        const { svg } = await mermaid.render(id, src);
+        const clean = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true, html: true }, ADD_TAGS: ['foreignObject'] });
+        diagramCache.set(key, { svg: clean });
+      } catch (err) {
+        diagramCache.set(key, { error: String((err && err.message) || err).split('\n')[0] });
+        const stray = document.getElementById('d' + id);
+        if (stray) stray.remove();
+      }
+      diagramPending.delete(key);
+      if (diagramCache.size > 80) diagramCache.delete(diagramCache.keys().next().value);
+    }
+    fillDiagrams();
+    syncMap = null;
   }
 
   let renderQueued = false;
@@ -346,11 +662,33 @@
   new ResizeObserver(() => { syncMap = null; }).observe(preview);
 
   /* ---------- Stats ---------- */
+  const countWords = (text) => (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+  let docWords = 0;
+
+  // Readable text only: skips diagram SVGs (with their CSS), hidden MathML and UI bits.
+  function readableText() {
+    const walker = document.createTreeWalker(preview, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement.closest('svg, style, .katex-mathml, .copy-code, .anchor, .code-lang, .diagram') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let text = '', node;
+    while ((node = walker.nextNode())) text += node.data + ' ';
+    return text;
+  }
+
   function updateStats() {
-    const text = preview.textContent || '';
-    const words = (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
-    $('#st-words').textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
-    $('#st-read span').textContent = `${Math.max(1, Math.round(words / 230))} min read`;
+    const text = readableText();
+    docWords = countWords(text);
+    const chars = text.replace(/\s/g, '').length;
+    $('#st-words').title = `${docWords.toLocaleString()} words, ${chars.toLocaleString()} characters (without spaces), ${editor.value.split('\n').length.toLocaleString()} lines`;
+    $('#st-read span').textContent = `${Math.max(1, Math.round(docWords / 230))} min read`;
+    updateWordLabel();
+  }
+
+  function updateWordLabel() {
+    const sel = editor.selectionStart !== editor.selectionEnd ? countWords(editor.value.slice(editor.selectionStart, editor.selectionEnd)) : 0;
+    $('#st-words').textContent = sel
+      ? `${sel.toLocaleString()} of ${docWords.toLocaleString()} words`
+      : `${docWords.toLocaleString()} ${docWords === 1 ? 'word' : 'words'}`;
   }
 
   function updateCursor() {
@@ -360,6 +698,7 @@
     const col = pos - before.lastIndexOf('\n');
     const sel = Math.abs(editor.selectionEnd - editor.selectionStart);
     $('#st-pos').textContent = `Ln ${line}, Col ${col}` + (sel ? ` (${sel} selected)` : '');
+    updateWordLabel();
   }
 
   /* ---------- Editing primitives ---------- */
@@ -468,14 +807,244 @@
     ul: () => prefixLines(() => '- ', /^\s*[-*+]\s+(?!\[[ xX]\])/),
     ol: () => prefixLines((i) => `${i + 1}. `, /^\s*\d+[.)]\s+/),
     task: () => prefixLines(() => '- [ ] ', /^\s*[-*+]\s+\[[ xX]\]\s+/),
-    table: () => insertBlock('| Column | Column |\n| ------ | ------ |\n| Cell   | Cell   |', 2, 8),
+    table: () => insertTable(3, 2),
     hr: () => insertBlock('---'),
+    mark: () => wrap('==', '==', 'highlighted text'),
+    math: () => {
+      const sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+      if (sel.includes('\n') || !sel) insertBlock('$$\n' + (sel || 'E = mc^2') + '\n$$', 3, 3 + (sel || 'E = mc^2').length);
+      else wrap('$', '$', 'x^2');
+    },
+    diagram: () => {
+      const sample = 'flowchart LR\n  A[Write] --> B{Happy?}\n  B -- Yes --> C[Publish]\n  B -- No --> A';
+      insertBlock('```mermaid\n' + sample + '\n```', 11, 11 + sample.length);
+    },
+    footnote: () => {
+      const v = editor.value;
+      let n = 1;
+      while (v.includes(`[^${n}]`)) n++;
+      const { selectionEnd: e } = editor;
+      replaceRange(e, e, `[^${n}]`);
+      const def = `[^${n}]: `;
+      const tail = editor.value.replace(/\s+$/, '');
+      const sep = /\n\[\^[^\]]+\]:[^\n]*$/.test(tail) ? '\n' : '\n\n';
+      const at = tail.length;
+      replaceRange(at, editor.value.length, sep + def + 'Footnote text.\n', at + sep.length + def.length, at + sep.length + def.length + 'Footnote text.'.length);
+    },
+    callout: () => {
+      const sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+      const body = (sel || 'Something worth noticing.').split('\n').map((l) => '> ' + l).join('\n');
+      insertBlock('> [!NOTE]\n' + body, 4, 8);
+    },
+    toc: () => insertBlock('[TOC]'),
+    date: () => {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      replaceRange(editor.selectionStart, editor.selectionEnd, `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    },
   };
 
+  function insertTable(cols, rows) {
+    const head = '| ' + Array.from({ length: cols }, (_, i) => `Column ${i + 1}`).join(' | ') + ' |';
+    const sep = '| ' + Array.from({ length: cols }, () => '--------').join(' | ') + ' |';
+    const row = '| ' + Array.from({ length: cols }, () => '        ').join(' | ') + ' |';
+    insertBlock([head, sep, ...Array.from({ length: rows }, () => row)].join('\n'), 2, 10);
+  }
+
+  /* ---------- Tables: format and Tab between cells ---------- */
+  const isTableLine = (l) => /\|/.test(l) && l.trim() !== '';
+  const isSepRow = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l) && l.includes('-');
+
+  function splitRow(line) {
+    let t = line.trim();
+    if (t.startsWith('|')) t = t.slice(1);
+    if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
+    const cells = [];
+    let cur = '', code = false;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (c === '\\' && t[i + 1] === '|') { cur += '\\|'; i++; continue; }
+      if (c === '`') code = !code;
+      if (c === '|' && !code) { cells.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  const WIDE = /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]|\p{Extended_Pictographic}/gu;
+  const textWidth = (s) => [...s].length + (s.match(WIDE) || []).length;
+
+  // Returns the table around the caret: its line range in the source and its cells.
+  function tableAt(pos) {
+    const v = editor.value;
+    const lines = v.split('\n');
+    let offset = 0, li = 0;
+    while (li < lines.length - 1 && offset + lines[li].length < pos) { offset += lines[li].length + 1; li++; }
+    if (!isTableLine(lines[li])) return null;
+    let a = li, b = li;
+    while (a > 0 && isTableLine(lines[a - 1])) a--;
+    while (b < lines.length - 1 && isTableLine(lines[b + 1])) b++;
+    if (b - a < 1 || !isSepRow(lines[a + 1])) return null;
+    let start = 0;
+    for (let i = 0; i < a; i++) start += lines[i].length + 1;
+    const block = lines.slice(a, b + 1);
+    const end = start + block.join('\n').length;
+    const row = li - a;
+    const rel = pos - offset;
+    const col = Math.max(0, (lines[li].slice(0, rel).match(/(?<!\\)\|/g) || []).length - (lines[li].trim().startsWith('|') ? 1 : 0));
+    return { start, end, block, row, col };
+  }
+
+  function buildTable(block) {
+    const rows = block.map(splitRow);
+    const aligns = rows[1].map((c) => (c.startsWith(':') && c.endsWith(':') ? 'c' : c.endsWith(':') ? 'r' : c.startsWith(':') ? 'l' : ''));
+    const body = [rows[0], ...rows.slice(2)];
+    const cols = Math.max(...body.map((r) => r.length), aligns.length);
+    const widths = Array.from({ length: cols }, (_, i) => Math.max(3, ...body.map((r) => textWidth(r[i] || ''))));
+    const pad = (s, w, a) => {
+      const gap = w - textWidth(s);
+      if (a === 'r') return ' '.repeat(gap) + s;
+      if (a === 'c') return ' '.repeat(Math.floor(gap / 2)) + s + ' '.repeat(Math.ceil(gap / 2));
+      return s + ' '.repeat(gap);
+    };
+    const line = (r) => '| ' + widths.map((w, i) => pad(r[i] || '', w, aligns[i])).join(' | ') + ' |';
+    const sep = '| ' + widths.map((w, i) => {
+      const a = aligns[i];
+      if (a === 'c') return ':' + '-'.repeat(w - 2) + ':';
+      if (a === 'r') return '-'.repeat(w - 1) + ':';
+      if (a === 'l') return ':' + '-'.repeat(w - 1);
+      return '-'.repeat(w);
+    }).join(' | ') + ' |';
+    return { lines: [line(body[0]), sep, ...body.slice(1).map(line)], widths, cols };
+  }
+
+  // Start offset (relative to the table) of a cell's content in formatted table lines.
+  function cellOffset(lines, widths, row, col) {
+    let off = 0;
+    for (let i = 0; i < row; i++) off += lines[i].length + 1;
+    off += 2;
+    for (let i = 0; i < col; i++) off += widths[i] + 3;
+    return off;
+  }
+
+  function formatTable(move = 0) {
+    const t = tableAt(editor.selectionStart);
+    if (!t) { if (!move) toast('Place the cursor in a table first'); return false; }
+    let { lines, widths, cols } = buildTable(t.block);
+    // Logical rows skip the separator line: 0 is the header, 1.. are body rows.
+    let r = t.row <= 1 ? 0 : t.row - 1;
+    let col = t.row === 1 ? 0 : Math.min(t.col, cols - 1);
+    if (move > 0) {
+      col++;
+      if (col >= cols) { col = 0; r++; }
+      if (r >= lines.length - 1) lines = [...lines, '| ' + widths.map((w) => ' '.repeat(w)).join(' | ') + ' |'];
+    } else if (move < 0) {
+      col--;
+      if (col < 0) {
+        if (r === 0) col = 0;
+        else { r--; col = cols - 1; }
+      }
+    }
+    const row = r === 0 ? 0 : r + 1;
+    const text = lines.join('\n');
+    const at = t.start + cellOffset(lines, widths, row, col);
+    const cell = splitRow(lines[row])[col] || '';
+    replaceRange(t.start, t.end, text, at, at + cell.length);
+    return true;
+  }
+
+  /* ---------- Line operations ---------- */
+  function moveLines(dir) {
+    const { selectionStart: s, selectionEnd: en, value: v } = editor;
+    const [ls, le] = lineBounds(s, en);
+    const block = v.slice(ls, le);
+    if (dir < 0) {
+      if (ls === 0) return;
+      const pls = v.lastIndexOf('\n', ls - 2) + 1;
+      const prev = v.slice(pls, ls - 1);
+      const shift = prev.length + 1;
+      replaceRange(pls, le, block + '\n' + prev, s - shift, en - shift);
+    } else {
+      if (le >= v.length) return;
+      let nle = v.indexOf('\n', le + 1);
+      if (nle === -1) nle = v.length;
+      const next = v.slice(le + 1, nle);
+      const shift = next.length + 1;
+      replaceRange(ls, nle, next + '\n' + block, s + shift, en + shift);
+    }
+  }
+
+  function duplicateLines(dir) {
+    const { selectionStart: s, selectionEnd: en, value: v } = editor;
+    const [ls, le] = lineBounds(s, en);
+    const block = v.slice(ls, le);
+    if (dir > 0) replaceRange(le, le, '\n' + block, s + block.length + 1, en + block.length + 1);
+    else replaceRange(ls, ls, block + '\n', s, en);
+  }
+
+  /* ---------- Format bar, insert menu, table picker ---------- */
   $('.format-bar').addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
   $('.format-bar').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-fmt]');
-    if (btn) formats[btn.dataset.fmt]();
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    if (btn.dataset.pop) { togglePopover(btn.dataset.pop, btn); return; }
+    if (btn.dataset.fmt) formats[btn.dataset.fmt]();
+  });
+
+  let openPop = null;
+  function togglePopover(id, anchor) {
+    const pop = $('#' + id);
+    const wasOpen = openPop === pop;
+    closePopover();
+    if (wasOpen) return;
+    pop.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 12) + 'px';
+    pop.style.top = r.bottom + 6 + 'px';
+    openPop = pop;
+    if (id === 'table-picker') paintTablePicker(0, 0);
+  }
+  function closePopover() {
+    if (openPop) openPop.hidden = true;
+    openPop = null;
+  }
+  document.addEventListener('mousedown', (e) => {
+    if (openPop && !openPop.contains(e.target) && !e.target.closest('[data-pop]')) closePopover();
+  });
+
+  $('#insert-menu').addEventListener('mousedown', (e) => e.preventDefault());
+  $('#insert-menu').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fmt]');
+    if (!b) return;
+    closePopover();
+    formats[b.dataset.fmt]();
+  });
+
+  const tableGrid = $('#table-grid');
+  for (let r = 1; r <= 6; r++) {
+    for (let c = 1; c <= 8; c++) {
+      const cell = document.createElement('button');
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.setAttribute('aria-label', `${c} by ${r} table`);
+      tableGrid.appendChild(cell);
+    }
+  }
+  function paintTablePicker(c, r) {
+    for (const cell of tableGrid.children) cell.classList.toggle('on', Number(cell.dataset.c) <= c && Number(cell.dataset.r) <= r);
+    $('#table-size').textContent = c && r ? `${c} columns × ${r} rows` : 'Pick a size';
+  }
+  tableGrid.addEventListener('mouseover', (e) => {
+    const cell = e.target.closest('button');
+    if (cell) paintTablePicker(Number(cell.dataset.c), Number(cell.dataset.r));
+  });
+  tableGrid.addEventListener('mousedown', (e) => e.preventDefault());
+  tableGrid.addEventListener('click', (e) => {
+    const cell = e.target.closest('button');
+    if (!cell) return;
+    closePopover();
+    insertTable(Number(cell.dataset.c), Number(cell.dataset.r));
   });
 
   /* ---------- Editor behaviour ---------- */
@@ -484,16 +1053,85 @@
     persistDraft();
     updateMeta();
     updateCursor();
+    scheduleAutosave();
+    typewriterScroll();
   });
   for (const ev of ['keyup', 'click', 'select']) editor.addEventListener(ev, updateCursor);
+  editor.addEventListener('keyup', (e) => { if (/^(Arrow|Page|Home|End)/.test(e.key)) typewriterScroll(); });
+
+  // Typewriter scrolling keeps the line you're writing in the middle of the editor.
+  function caretTop(pos) {
+    const cs = getComputedStyle(editor);
+    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'paddingTop', 'paddingLeft', 'paddingRight', 'tabSize']) mirror.style[p] = cs[p];
+    mirror.style.width = editor.clientWidth + 'px';
+    const span = document.createElement('span');
+    span.textContent = '​';
+    mirror.replaceChildren(document.createTextNode(editor.value.slice(0, pos)), span);
+    const top = span.offsetTop;
+    mirror.replaceChildren();
+    return top;
+  }
+  function typewriterScroll() {
+    if (!settings.typewriter || app.dataset.view === 'read' || editor.selectionStart !== editor.selectionEnd) return;
+    const lh = parseFloat(getComputedStyle(editor).lineHeight) || 24;
+    editor.scrollTop = caretTop(editor.selectionStart) - editor.clientHeight / 2 + lh / 2;
+  }
+
+  const PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', '`': '`' };
+  const WRAPS = { ...PAIRS, '*': '*', '_': '_', '~': '~' };
+  const CLOSERS = new Set(Object.values(PAIRS));
+
+  function autoPair(e) {
+    const { selectionStart: s, selectionEnd: en, value: v } = editor;
+    const ch = e.key;
+    if (s !== en) {
+      if (!WRAPS[ch]) return false;
+      const sel = v.slice(s, en);
+      replaceRange(s, en, ch + sel + WRAPS[ch], s + 1, en + 1);
+      return true;
+    }
+    const next = v[s] || '';
+    const prev = v[s - 1] || '';
+    if (CLOSERS.has(ch) && next === ch) { editor.setSelectionRange(s + 1, s + 1); return true; }
+    if (!PAIRS[ch]) return false;
+    if (next && !/[\s)\]}.,;:!?]/.test(next)) return false;
+    if ((ch === '"' || ch === '`') && /[\p{L}\p{N}]/u.test(prev)) return false;
+    if (ch === '`' && prev === '`') return false;
+    replaceRange(s, s, ch + PAIRS[ch], s + 1);
+    return true;
+  }
 
   editor.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
     if (mod && !e.altKey) {
       const k = e.key.toLowerCase();
       const map = { b: 'bold', i: 'italic', k: 'link', e: 'code', h: 'heading' };
       if (!e.shiftKey && map[k]) { e.preventDefault(); formats[map[k]](); return; }
       if (e.shiftKey && k === 'x') { e.preventDefault(); formats.strike(); return; }
+      if (e.shiftKey && k === 'h') { e.preventDefault(); formats.mark(); return; }
+      if (e.shiftKey && k === 'm') { e.preventDefault(); formats.math(); return; }
+      if (e.shiftKey && k === 'v') { e.preventDefault(); pastePlain(); return; }
+    }
+
+    if (e.altKey && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      const dir = e.key === 'ArrowUp' ? -1 : 1;
+      if (e.shiftKey) duplicateLines(dir); else moveLines(dir);
+      return;
+    }
+
+    if (settings.autoPair && !mod && !e.altKey && e.key.length === 1 && autoPair(e)) { e.preventDefault(); return; }
+
+    if (e.key === 'Backspace' && settings.autoPair && !mod && editor.selectionStart === editor.selectionEnd) {
+      const s = editor.selectionStart, v = editor.value;
+      if (s > 0 && PAIRS[v[s - 1]] && PAIRS[v[s - 1]] === v[s]) { e.preventDefault(); replaceRange(s - 1, s + 1, ''); return; }
+    }
+
+    if (e.key === 'Tab' && !mod && !e.altKey && tableAt(editor.selectionStart) && !editor.value.slice(editor.selectionStart, editor.selectionEnd).includes('\n')) {
+      e.preventDefault();
+      formatTable(e.shiftKey ? -1 : 1);
+      return;
     }
 
     if (e.key === 'Tab' && !mod && !e.altKey) {
@@ -534,18 +1172,100 @@
   });
 
   editor.addEventListener('paste', (e) => {
-    const text = e.clipboardData && e.clipboardData.getData('text/plain');
+    const cd = e.clipboardData;
+    if (!cd) return;
+    const images = [...cd.files].filter((f) => f.type.startsWith('image/'));
+    if (images.length) { e.preventDefault(); insertImages(images); return; }
+
+    const text = cd.getData('text/plain');
     const { selectionStart: s, selectionEnd: en, value: v } = editor;
     if (text && s !== en && /^https?:\/\/\S+$/.test(text.trim()) && !v.slice(s, en).includes('\n')) {
       e.preventDefault();
       replaceRange(s, en, `[${v.slice(s, en)}](${text.trim()})`);
+      return;
+    }
+
+    const html = cd.getData('text/html');
+    if (settings.smartPaste && html) {
+      const md = htmlToMarkdown(html);
+      if (md) { e.preventDefault(); replaceRange(s, en, md); }
     }
   });
+
+  async function pastePlain() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) replaceRange(editor.selectionStart, editor.selectionEnd, text.replace(/\r\n?/g, '\n'));
+    } catch (e) {
+      toast('Could not read the clipboard');
+    }
+  }
+
+  // Rich text from web pages, Word or Google Docs becomes Markdown. Content that is only styled
+  // text (code editors, terminals, plain selections) is pasted as is.
+  const SEMANTIC = 'h1,h2,h3,h4,h5,h6,ul,ol,table,blockquote,pre,a[href],strong,b,em,i,img,code,hr,del,s';
+  let turndown = null;
+  function htmlToMarkdown(html) {
+    if (!window.TurndownService) return null;
+    const doc = DOMPurify.sanitize(html, { RETURN_DOM: true, FORBID_TAGS: ['style', 'meta', 'title'] });
+    for (const b of doc.querySelectorAll('b[id^="docs-internal-guid"]')) b.replaceWith(...b.childNodes);
+    if (!doc.querySelector(SEMANTIC)) return null;
+    if (!turndown) {
+      turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '_', strongDelimiter: '**', hr: '---' });
+      if (window.turndownPluginGfm) turndown.use(turndownPluginGfm.gfm);
+      // List items with a single space after the marker ("- item"), like Inkwell's own lists.
+      turndown.addRule('listItem', {
+        filter: 'li',
+        replacement(content, node, options) {
+          const parent = node.parentNode;
+          let prefix = options.bulletListMarker + ' ';
+          if (parent.nodeName === 'OL') {
+            const start = Number(parent.getAttribute('start')) || 1;
+            prefix = (start + Array.prototype.indexOf.call(parent.children, node)) + '. ';
+          }
+          const body = content.replace(/^\n+/, '').replace(/\n+$/, '\n').replace(/\n(?!$)/g, '\n' + ' '.repeat(prefix.length));
+          return prefix + body + (node.nextSibling && !/\n$/.test(body) ? '\n' : '');
+        },
+      });
+    }
+    try {
+      return turndown.turndown(doc).replace(/\n{3,}/g, '\n\n').trim();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Pasted or dropped images are saved into an "assets" folder next to the document.
+  async function insertImages(files) {
+    if (!native) { toast('Pasting images works in the desktop app'); return; }
+    if (!state.handle) {
+      toast('Save the document first, so images can be stored next to it');
+      await saveAs();
+      if (!state.handle) return;
+    }
+    const links = [];
+    for (const f of files) {
+      try {
+        const rel = await native.saveAsset(f.name || 'image.png', new Uint8Array(await f.arrayBuffer()));
+        const alt = (f.name || 'image').replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ');
+        links.push(`![${alt}](${rel.split('/').map(encodeURIComponent).join('/')})`);
+      } catch (err) {
+        toast('Could not save image: ' + err.message);
+      }
+    }
+    if (links.length) {
+      replaceRange(editor.selectionStart, editor.selectionEnd, links.join('\n'));
+      toast(links.length === 1 ? 'Image saved to assets' : `${links.length} images saved to assets`);
+    }
+  }
 
   /* ---------- Preview interactions ---------- */
   preview.addEventListener('click', (e) => {
     const box = e.target.closest('input[type="checkbox"]');
     if (box) { toggleTask($$('input[type="checkbox"]', preview).indexOf(box), box.checked); return; }
+
+    const img = e.target.closest('img');
+    if (img && !img.closest('a')) { openLightbox(img); return; }
 
     const copy = e.target.closest('.copy-code');
     if (copy) {
@@ -658,21 +1378,34 @@
     await w.close();
   }
 
-  async function save() {
-    if (!state.handle) return saveAs();
+  async function save({ quiet = false } = {}) {
+    if (!state.handle) return quiet ? undefined : saveAs();
     try {
+      const content = editor.value;
       if (native) {
-        await native.writeFile(state.handle.path, editor.value);
+        await native.writeFile(state.handle.path, content);
       } else {
+        if (quiet && state.handle.queryPermission && (await state.handle.queryPermission({ mode: 'readwrite' })) !== 'granted') return;
         if (!(await ensurePermission(state.handle, 'readwrite'))) { toast('Permission denied'); return; }
         await writeHandle(state.handle);
       }
-      markSaved();
-      toast(`Saved ${state.handle.name}`);
+      state.savedContent = content;
+      persistDraft();
+      updateMeta();
+      if (!quiet) toast(`Saved ${state.handle.name}`);
+      refreshFiles();
     } catch (err) {
       toast('Save failed: ' + err.message);
     }
   }
+
+  let autosaveTimer;
+  function scheduleAutosave() {
+    clearTimeout(autosaveTimer);
+    if (!settings.autosave || !state.handle) return;
+    autosaveTimer = setTimeout(() => { if (state.dirty) save({ quiet: true }); }, 1200);
+  }
+  window.addEventListener('blur', () => { if (settings.autosave && state.handle && state.dirty) save({ quiet: true }); });
 
   function suggestedName() {
     const name = docName.value.trim() || 'Untitled.md';
@@ -710,6 +1443,7 @@
     state.savedContent = editor.value;
     persistDraft();
     updateMeta();
+    refreshFiles();
   }
 
   async function newDoc() {
@@ -814,11 +1548,123 @@
     });
   }
 
+  /* ---------- Files (folder tree, desktop only) ---------- */
+  const filesEl = $('#files');
+  const tree = { root: null, pinned: ls.get('folder', null), expanded: new Set(ls.get('expanded', [])) };
+  const pathKey = (p) => (p || '').replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+  const isInside = (p, dir) => pathKey(p).startsWith(pathKey(dir) + '/');
+  const dirOf = (p) => p.replace(/[\\/][^\\/]*$/, '');
+
+  function treeRoot() {
+    const doc = state.handle && state.handle.path;
+    if (tree.pinned && (!doc || isInside(doc, tree.pinned))) return tree.pinned;
+    return doc ? dirOf(doc) : tree.pinned;
+  }
+
+  let filesTimer;
+  function refreshFiles() {
+    if (!native || !filesEl) return;
+    clearTimeout(filesTimer);
+    filesTimer = setTimeout(renderFiles, 30);
+  }
+
+  async function renderFiles() {
+    const root = treeRoot();
+    tree.root = root;
+    $('#files-name').textContent = root ? baseName(root) || root : 'Files';
+    $('#files-name').title = root || '';
+    if (!root) {
+      filesEl.innerHTML = '<p class="empty-hint">Save the document or open a folder to see its files.</p>';
+      return;
+    }
+    const list = await listDir(root);
+    const frag = document.createDocumentFragment();
+    await appendEntries(frag, list, 0);
+    filesEl.replaceChildren(frag);
+    if (!list.length) filesEl.innerHTML = '<p class="empty-hint">No Markdown files in this folder.</p>';
+  }
+
+  async function listDir(dir) {
+    try { return await native.listDir(dir); } catch (e) { return []; }
+  }
+
+  async function appendEntries(parent, entries, depth) {
+    const current = state.handle && state.handle.path;
+    for (const entry of entries) {
+      const btn = document.createElement('button');
+      btn.className = 'file-item' + (entry.dir ? ' is-dir' : '') + (!entry.dir && pathKey(entry.path) === pathKey(current) ? ' current' : '');
+      btn.style.setProperty('--depth', depth);
+      btn.title = entry.path;
+      btn.dataset.path = entry.path;
+      const open = entry.dir && tree.expanded.has(pathKey(entry.path));
+      btn.innerHTML = entry.dir
+        ? `<svg class="chev${open ? ' open' : ''}"><use href="#i-chevron"/></svg><svg><use href="#i-folder"/></svg><span></span>`
+        : '<svg><use href="#i-file"/></svg><span></span>';
+      btn.querySelector('span').textContent = entry.dir ? entry.name : entry.name.replace(/\.(md|markdown|mdown|mkd|mkdn)$/i, '');
+      if (entry.dir) btn.dataset.dir = '1';
+      parent.appendChild(btn);
+      if (open) await appendEntries(parent, await listDir(entry.path), depth + 1);
+    }
+  }
+
+  if (filesEl) {
+    filesEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.file-item');
+      if (!btn) return;
+      const p = btn.dataset.path;
+      if (btn.dataset.dir) {
+        const k = pathKey(p);
+        if (tree.expanded.has(k)) tree.expanded.delete(k); else tree.expanded.add(k);
+        ls.set('expanded', [...tree.expanded].slice(-200));
+        renderFiles();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) { native.newWindow(p); return; }
+      if (state.handle && pathKey(state.handle.path) === pathKey(p)) return;
+      if (!(await confirmDiscard())) return;
+      await openPath(p);
+    });
+    filesEl.addEventListener('auxclick', (e) => {
+      const btn = e.target.closest('.file-item:not(.is-dir)');
+      if (btn && e.button === 1) native.newWindow(btn.dataset.path);
+    });
+    window.addEventListener('focus', refreshFiles);
+  }
+
+  async function openFolder() {
+    const dir = await native.openFolderDialog();
+    if (!dir) return;
+    tree.pinned = dir;
+    ls.set('folder', dir);
+    toggleSidebar(true);
+    renderFiles();
+  }
+
+  /* ---------- Image lightbox ---------- */
+  const lightbox = $('#lightbox');
+  function openLightbox(img) {
+    const big = $('#lightbox-img');
+    big.src = img.currentSrc || img.src;
+    big.alt = img.alt;
+    $('#lightbox-caption').textContent = img.alt || '';
+    lightbox.hidden = false;
+  }
+  lightbox.addEventListener('click', () => { lightbox.hidden = true; });
+
   /* ---------- Drag & drop ---------- */
   const overlay = $('#drop-overlay');
   let dragDepth = 0;
   const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
-  window.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; overlay.hidden = false; });
+  const onlyImages = (list) => list.length > 0 && [...list].every((it) => (it.type || '').startsWith('image/'));
+  window.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    $('#drop-text').textContent = onlyImages(e.dataTransfer.items) && app.dataset.view !== 'read'
+      ? 'Drop images to insert them'
+      : 'Drop a Markdown file to open it';
+    overlay.hidden = false;
+  });
   window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
   window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; overlay.hidden = true; } });
   window.addEventListener('drop', async (e) => {
@@ -828,6 +1674,7 @@
     overlay.hidden = true;
     const files = [...e.dataTransfer.files];
     if (!files.length) return;
+    if (onlyImages(files) && app.dataset.view !== 'read') { insertImages(files); return; }
 
     if (native) {
       const paths = files.map((f) => native.pathForFile(f)).filter(Boolean);
@@ -858,14 +1705,20 @@ code{font:.8em "JetBrains Mono",Consolas,monospace;background:var(--code);border
 pre{background:var(--code);border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto}pre code{border:0;padding:0;background:none;font-size:.72em}.code-lang,.copy-code{display:none}
 table{border-collapse:collapse;font:.8em/1.5 system-ui,sans-serif}th,td{border:1px solid var(--border);padding:8px 12px;text-align:left}
 img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--border);margin:2.4em 0}li::marker{color:var(--muted)}
-.hljs-keyword,.hljs-literal{color:#a3268c}.hljs-string{color:#1f7a4d}.hljs-number{color:#b45309}.hljs-comment{color:#9a9182;font-style:italic}.hljs-title{color:#2f47c9}.hljs-attr,.hljs-property{color:#0e7490}`;
+.hljs-keyword,.hljs-literal{color:#a3268c}.hljs-string{color:#1f7a4d}.hljs-number{color:#b45309}.hljs-comment{color:#9a9182;font-style:italic}.hljs-title{color:#2f47c9}.hljs-attr,.hljs-property{color:#0e7490}
+mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-block{overflow-x:auto;margin:0 0 1.1em}.diagram{text-align:center;margin:0 0 1.1em}.diagram svg{max-width:100%;height:auto}
+.callout{--c:#3346d3;border:1px solid color-mix(in srgb,var(--c) 30%,transparent);border-left:4px solid var(--c);background:color-mix(in srgb,var(--c) 7%,transparent);border-radius:8px;padding:.6em 1em;margin:0 0 1.1em}.callout-title{font:600 .8em system-ui,sans-serif;color:var(--c);margin:0 0 .3em;text-transform:uppercase;letter-spacing:.05em}.callout-body>:last-child{margin-bottom:0}
+.callout[data-callout=tip]{--c:#15803d}.callout[data-callout=important]{--c:#7c3aed}.callout[data-callout=warning]{--c:#b45309}.callout[data-callout=caution]{--c:#c2410c}.callout[data-callout=quote]{--c:#857c6e}
+.footnotes{border-top:1px solid var(--border);margin-top:3em;padding-top:1em;font-size:.85em}.fn-back{text-decoration:none}.frontmatter{border:1px solid var(--border);border-radius:8px;padding:.6em 1em;margin-bottom:2em;font:.75em/1.6 system-ui,sans-serif}.frontmatter dl{display:grid;grid-template-columns:auto 1fr;gap:2px 16px;margin:0}.frontmatter dt{color:var(--muted)}.frontmatter dd{margin:0}.fm-chip{display:inline-block;border:1px solid var(--border);border-radius:99px;padding:0 8px;margin:0 4px 2px 0}
+.toc ul{list-style:none;padding-left:0}.toc li[data-level="2"]{padding-left:1em}.toc li[data-level="3"]{padding-left:2em}.toc li[data-level="4"]{padding-left:3em}`;
 
   function exportHtml() {
     const title = docName.value.replace(/\.[^.]+$/, '');
     const body = preview.cloneNode(true);
     body.querySelectorAll('.copy-code').forEach((n) => n.remove());
     body.querySelectorAll('input[type="checkbox"]').forEach((n) => n.setAttribute('disabled', ''));
-    const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${escapeHtml(title)}</title>\n<style>${EXPORT_CSS}</style>\n</head>\n<body>\n<main>\n${body.innerHTML}\n</main>\n</body>\n</html>\n`;
+    const katexCss = body.querySelector('.katex') ? `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${window.katex ? katex.version : '0.19.0'}/dist/katex.min.css">\n` : '';
+    const html = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>${escapeHtml(title)}</title>\n${katexCss}<style>${EXPORT_CSS}</style>\n</head>\n<body>\n<main>\n${body.innerHTML}\n</main>\n</body>\n</html>\n`;
     download(title + '.html', html, 'text/html');
     toast('Exported HTML');
   }
@@ -894,8 +1747,9 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     syncMap = null;
     requestAnimationFrame(() => {
       if (view === 'split') previewPane.scrollTop = interpolate(getSyncMap().points, 'e', 'p', editor.scrollTop);
-      if (view !== 'read') editor.focus({ preventScroll: true });
+      if (view !== 'read' && !find.open) editor.focus({ preventScroll: true });
       updateActiveOutline();
+      if (find.open) refreshFind(true);
     });
   }
   $$('.view-switch button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
@@ -959,7 +1813,9 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     if (native) native.setTheme(choice);
     $$('.theme-switch button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.themeChoice === choice)));
     moveIndicator($('.theme-switch'));
+    if (diagramSources.length) fillDiagrams();
   }
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (diagramSources.length) fillDiagrams(); });
   $$('.theme-switch button').forEach((b) => b.addEventListener('click', () => setTheme(b.dataset.themeChoice)));
   const currentTheme = () => { try { return localStorage.getItem('inkwell.theme') || 'system'; } catch (e) { return 'system'; } };
 
@@ -1012,8 +1868,33 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
       { id: 'showInFolder', label: isMac ? 'Show file in Finder' : 'Show file in Explorer', icon: 'open', run: () => (state.handle ? native.showInFolder(state.handle.path) : toast('Save the document first')) },
     ] : []),
     { id: 'palette', label: 'Command palette', icon: 'command', kbd: 'Ctrl Shift P', run: () => openPalette() },
+    { id: 'find', label: 'Find', icon: 'search', kbd: 'Ctrl F', run: () => openFind(false) },
+    { id: 'replace', label: 'Find and replace', icon: 'replace', kbd: 'Ctrl Alt F', run: () => openFind(true) },
+    { id: 'settings', label: 'Settings', icon: 'settings', kbd: 'Ctrl ,', run: () => openSettings() },
+    { id: 'formatTable', label: 'Format table', icon: 'table', run: () => formatTable(0) },
+    { id: 'typewriter', label: 'Toggle typewriter scrolling', icon: 'focus', run: () => { setSetting('typewriter', !settings.typewriter); toast(settings.typewriter ? 'Typewriter scrolling on' : 'Typewriter scrolling off'); typewriterScroll(); } },
+    { id: 'autosave', label: 'Toggle autosave', icon: 'save', run: () => { setSetting('autosave', !settings.autosave); toast(settings.autosave ? 'Autosave on' : 'Autosave off'); scheduleAutosave(); } },
+    { id: 'pastePlain', label: 'Paste as plain text', icon: 'copy', kbd: 'Ctrl Shift V', run: pastePlain },
     { id: 'insertTable', label: 'Insert table', icon: 'table', run: formats.table },
     { id: 'insertTask', label: 'Insert task list', icon: 'check', run: formats.task },
+    { id: 'insertMath', label: 'Insert math', icon: 'sigma', kbd: 'Ctrl Shift M', run: formats.math },
+    { id: 'insertDiagram', label: 'Insert diagram (Mermaid)', icon: 'diagram', run: formats.diagram },
+    { id: 'insertCallout', label: 'Insert callout', icon: 'callout', run: formats.callout },
+    { id: 'insertFootnote', label: 'Insert footnote', icon: 'footnote', run: formats.footnote },
+    { id: 'insertToc', label: 'Insert table of contents', icon: 'list', run: formats.toc },
+    { id: 'insertDate', label: 'Insert today\'s date', icon: 'calendar', run: formats.date },
+    { id: 'highlight', label: 'Highlight', icon: 'highlight', kbd: 'Ctrl Shift H', run: formats.mark },
+    { id: 'moveLineUp', label: 'Move line up', icon: 'up', kbd: 'Alt ↑', run: () => moveLines(-1) },
+    { id: 'moveLineDown', label: 'Move line down', icon: 'down', kbd: 'Alt ↓', run: () => moveLines(1) },
+    { id: 'duplicateLine', label: 'Duplicate line', icon: 'copy', kbd: 'Shift Alt ↓', run: () => duplicateLines(1) },
+    ...(native ? [
+      { id: 'openFolder', label: 'Open folder…', icon: 'folder', run: () => openFolder() },
+      ...(isMac ? [] : [
+        { id: 'zoomIn', label: 'Zoom in', icon: 'plus', kbd: 'Ctrl =', run: () => zoom(1) },
+        { id: 'zoomOut', label: 'Zoom out', icon: 'minus', kbd: 'Ctrl -', run: () => zoom(-1) },
+        { id: 'zoomReset', label: 'Reset zoom', icon: 'monitor', kbd: 'Ctrl 0', run: () => zoom(0) },
+      ]),
+    ] : []),
     { id: 'welcome', label: 'Show welcome guide', icon: 'book', run: async () => { if (await confirmDiscard()) setDocument({ content: welcomeText(), name: 'Welcome.md' }); } },
   ];
   const commandById = Object.fromEntries(commands.map((c) => [c.id, c]));
@@ -1098,12 +1979,21 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     ]],
     ['View', [
       ['Write / Split / Read', 'Ctrl 1 2 3'], ['Focus mode', 'Ctrl .'],
-      ['Toggle sidebar', 'Ctrl Shift B'], ['Command palette', 'Ctrl Shift P'], ['About & shortcuts', 'F1'],
+      ['Toggle sidebar', 'Ctrl Shift B'], ['Command palette', 'Ctrl Shift P'],
+      ['Settings', 'Ctrl ,'], ['About & shortcuts', 'F1'],
+      ...(native && !isMac ? [['Zoom in / out / reset', 'Ctrl = - 0']] : []),
+    ]],
+    ['Find', [
+      ['Find', 'Ctrl F'], ['Find and replace', 'Ctrl Alt F'], ['Next / previous match', 'Enter / Shift Enter'],
     ]],
     ['Formatting', [
-      ['Bold', 'Ctrl B'], ['Italic', 'Ctrl I'], ['Strikethrough', 'Ctrl Shift X'],
-      ['Link', 'Ctrl K'], ['Inline code', 'Ctrl E'], ['Cycle heading', isMac ? '\u2303 H' : 'Ctrl H'],
+      ['Bold', 'Ctrl B'], ['Italic', 'Ctrl I'], ['Strikethrough', 'Ctrl Shift X'], ['Highlight', 'Ctrl Shift H'],
+      ['Link', 'Ctrl K'], ['Inline code', 'Ctrl E'], ['Math', 'Ctrl Shift M'], ['Cycle heading', isMac ? '\u2303 H' : 'Ctrl H'],
       ['Indent / outdent list', 'Tab / Shift Tab'],
+    ]],
+    ['Editing', [
+      ['Next / previous table cell', 'Tab / Shift Tab'], ['Move line up / down', 'Alt \u2191 \u2193'],
+      ['Duplicate line', 'Shift Alt \u2193'], ['Paste as plain text', 'Ctrl Shift V'],
     ]],
   ];
 
@@ -1257,16 +2147,372 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
     commandById.checkUpdates = commands[commands.length - 1];
   }
 
+  /* ---------- Find & replace ---------- */
+  const findbar = $('#findbar');
+  const fbFind = $('#fb-find');
+  const fbReplace = $('#fb-replace');
+  const editorMarks = $('#editor-marks');
+  const find = { open: false, re: null, matches: [], index: -1, ranges: [], opts: { case: false, word: false, regex: false, ...ls.get('findOpts', {}) } };
+  const hasHighlights = typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined';
+
+  function buildFindRegex() {
+    const q = fbFind.value;
+    if (!q) return null;
+    let src = find.opts.regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (find.opts.word) src = `(?<![\\p{L}\\p{N}_])(?:${src})(?![\\p{L}\\p{N}_])`;
+    try { return new RegExp(src, 'gmu' + (find.opts.case ? '' : 'i')); } catch (e) {
+      try { return new RegExp(src, 'gm' + (find.opts.case ? '' : 'i')); } catch (e2) { return 'invalid'; }
+    }
+  }
+
+  function collect(re, text, limit = 10000) {
+    const out = [];
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) && out.length < limit) {
+      if (m[0] === '') { re.lastIndex++; continue; }
+      out.push([m.index, m.index + m[0].length]);
+    }
+    return out;
+  }
+
+  const findInPreview = () => app.dataset.view === 'read';
+
+  // Recomputes matches. With `jump`, selects the first match at or after the cursor.
+  function refreshFind(jump) {
+    const re = buildFindRegex();
+    find.re = re instanceof RegExp ? re : null;
+    findbar.classList.toggle('invalid', re === 'invalid');
+    find.matches = find.re ? collect(find.re, editor.value) : [];
+    paintPreviewMatches();
+    if (jump) {
+      if (findInPreview()) find.index = find.ranges.length ? 0 : -1;
+      else {
+        const from = Math.min(editor.selectionStart, editor.selectionEnd);
+        const i = find.matches.findIndex(([s]) => s >= from);
+        find.index = find.matches.length ? (i < 0 ? 0 : i) : -1;
+      }
+      showCurrent();
+    } else {
+      const n = findInPreview() ? find.ranges.length : find.matches.length;
+      if (find.index >= n) find.index = n - 1;
+      paintEditorMarks();
+      paintCurrentPreview(false);
+      updateFindCount();
+    }
+  }
+
+  function updateFindCount() {
+    const n = findInPreview() ? find.ranges.length : find.matches.length;
+    $('#fb-count').textContent = !fbFind.value ? '' : n ? `${find.index + 1} of ${n >= 10000 ? '10000+' : n}` : 'No results';
+  }
+
+  function step(dir) {
+    const n = findInPreview() ? find.ranges.length : find.matches.length;
+    if (!n) return;
+    find.index = ((find.index < 0 ? (dir > 0 ? -1 : 0) : find.index) + dir + n) % n;
+    showCurrent();
+  }
+
+  function showCurrent() {
+    updateFindCount();
+    if (findInPreview()) { paintCurrentPreview(true); return; }
+    const m = find.matches[find.index];
+    if (m) {
+      editor.setSelectionRange(m[0], m[1]);
+      const top = caretTop(m[0]);
+      if (top < editor.scrollTop + 40 || top > editor.scrollTop + editor.clientHeight - 80) {
+        lockSync('editor');
+        editor.scrollTop = top - editor.clientHeight / 3;
+        if (app.dataset.view === 'split') previewPane.scrollTop = interpolate(getSyncMap().points, 'e', 'p', editor.scrollTop);
+      }
+    }
+    paintEditorMarks();
+    paintCurrentPreview(false);
+  }
+
+  // Matches in the editor are drawn on a layer behind the (transparent) textarea.
+  function paintEditorMarks() {
+    if (!find.open || !find.matches.length || app.dataset.view === 'read') { editorMarks.hidden = true; return; }
+    const cs = getComputedStyle(editor);
+    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordSpacing', 'paddingTop', 'paddingLeft', 'paddingRight', 'paddingBottom', 'tabSize']) editorMarks.style[p] = cs[p];
+    Object.assign(editorMarks.style, { top: editor.offsetTop + 'px', left: editor.offsetLeft + 'px', width: editor.clientWidth + 'px', height: editor.clientHeight + 'px' });
+    const v = editor.value;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    find.matches.forEach(([s, e], i) => {
+      frag.appendChild(document.createTextNode(v.slice(last, s)));
+      const mk = document.createElement('mark');
+      if (i === find.index) mk.className = 'current';
+      mk.textContent = v.slice(s, e);
+      frag.appendChild(mk);
+      last = e;
+    });
+    frag.appendChild(document.createTextNode(v.slice(last) + '​'));
+    editorMarks.replaceChildren(frag);
+    editorMarks.hidden = false;
+    editorMarks.scrollTop = editor.scrollTop;
+  }
+  editor.addEventListener('scroll', () => { if (!editorMarks.hidden) editorMarks.scrollTop = editor.scrollTop; }, { passive: true });
+  new ResizeObserver(() => { if (find.open) paintEditorMarks(); }).observe(editor);
+
+  // Matches in the preview use the CSS Custom Highlight API, so the DOM stays untouched.
+  function paintPreviewMatches() {
+    find.ranges = [];
+    if (!hasHighlights) return;
+    CSS.highlights.delete('find');
+    CSS.highlights.delete('find-current');
+    if (!find.open || !find.re) return;
+    const walker = document.createTreeWalker(preview, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement.closest('.copy-code, .anchor, .katex-mathml, .code-lang, svg') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let node;
+    while ((node = walker.nextNode()) && find.ranges.length < 10000) {
+      for (const [s, e] of collect(find.re, node.data, 10000 - find.ranges.length)) {
+        const r = new Range();
+        r.setStart(node, s);
+        r.setEnd(node, e);
+        find.ranges.push(r);
+      }
+    }
+    if (find.ranges.length) CSS.highlights.set('find', new Highlight(...find.ranges));
+  }
+
+  function paintCurrentPreview(scroll) {
+    if (!hasHighlights) return;
+    CSS.highlights.delete('find-current');
+    if (!findInPreview()) return;
+    const r = find.ranges[find.index];
+    if (!r) return;
+    CSS.highlights.set('find-current', new Highlight(r));
+    if (scroll) {
+      const rect = r.getBoundingClientRect();
+      const pane = previewPane.getBoundingClientRect();
+      if (rect.top < pane.top + 40 || rect.bottom > pane.bottom - 40) {
+        previewPane.scrollTop += rect.top - pane.top - previewPane.clientHeight / 3;
+      }
+    }
+  }
+
+  function openFind(withReplace) {
+    closeMenu();
+    if (!palette.hidden) closePalette();
+    find.open = true;
+    findbar.hidden = false;
+    findbar.classList.toggle('with-replace', !!withReplace);
+    const sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+    if (sel && !sel.includes('\n') && app.dataset.view !== 'read') fbFind.value = sel;
+    else if (app.dataset.view === 'read') {
+      const s = String(window.getSelection() || '');
+      if (s && !s.includes('\n')) fbFind.value = s;
+    }
+    syncFindOptions();
+    const target = withReplace && fbFind.value ? fbReplace : fbFind;
+    target.focus();
+    target.select();
+    refreshFind(true);
+  }
+
+  function closeFind() {
+    find.open = false;
+    findbar.hidden = true;
+    editorMarks.hidden = true;
+    if (hasHighlights) { CSS.highlights.delete('find'); CSS.highlights.delete('find-current'); }
+    if (app.dataset.view !== 'read') editor.focus({ preventScroll: true });
+  }
+
+  function syncFindOptions() {
+    for (const b of $$('[data-opt]', findbar)) b.setAttribute('aria-pressed', String(!!find.opts[b.dataset.opt]));
+  }
+
+  function replacement(matchText) {
+    const rep = fbReplace.value;
+    if (!find.opts.regex) return rep;
+    const single = new RegExp(find.re.source, find.re.flags.replace('g', ''));
+    return matchText.replace(single, rep);
+  }
+
+  function replaceOne() {
+    if (!find.re) return;
+    if (findInPreview()) setView('split');
+    let m = find.matches[find.index];
+    const sel = [editor.selectionStart, editor.selectionEnd];
+    if (!m || m[0] !== sel[0] || m[1] !== sel[1]) { refreshFind(true); m = find.matches[find.index]; if (!m) return; }
+    const rep = replacement(editor.value.slice(m[0], m[1]));
+    replaceRange(m[0], m[1], rep, m[0] + rep.length);
+    fbReplace.focus();
+    refreshFind(true);
+  }
+
+  function replaceAll() {
+    if (!find.re || !find.matches.length) return;
+    const n = find.matches.length;
+    const v = editor.value;
+    let out = '', last = 0;
+    for (const [s, e] of find.matches) {
+      out += v.slice(last, s) + replacement(v.slice(s, e));
+      last = e;
+    }
+    out += v.slice(last);
+    const top = editor.scrollTop;
+    replaceRange(0, v.length, out, 0);
+    editor.scrollTop = top;
+    fbReplace.focus();
+    refreshFind(false);
+    toast(`Replaced ${n.toLocaleString()} ${n === 1 ? 'match' : 'matches'}`);
+  }
+
+  fbFind.addEventListener('input', () => refreshFind(true));
+  fbFind.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+  });
+  fbReplace.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if (e.ctrlKey || e.metaKey) replaceAll(); else replaceOne(); }
+  });
+  findbar.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.altKey) { e.preventDefault(); e.stopPropagation(); fbFind.focus(); fbFind.select(); }
+  });
+  findbar.addEventListener('click', (e) => {
+    const opt = e.target.closest('[data-opt]');
+    if (opt) {
+      find.opts[opt.dataset.opt] = !find.opts[opt.dataset.opt];
+      ls.set('findOpts', find.opts);
+      syncFindOptions();
+      refreshFind(true);
+      return;
+    }
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.id === 'fb-next') step(1);
+    else if (b.id === 'fb-prev') step(-1);
+    else if (b.id === 'fb-close') closeFind();
+    else if (b.id === 'fb-toggle') { findbar.classList.toggle('with-replace'); (findbar.classList.contains('with-replace') ? fbReplace : fbFind).focus(); }
+    else if (b.id === 'fb-one') replaceOne();
+    else if (b.id === 'fb-all') replaceAll();
+  });
+
+  /* ---------- Settings dialog ---------- */
+  const settingsEl = $('#settings');
+  let settingsReturnFocus = null;
+
+  function renderSettingsForm() {
+    for (const input of $$('[data-setting]', settingsEl)) {
+      const key = input.dataset.setting;
+      if (input.type === 'checkbox') input.checked = !!settings[key];
+      else if (input.type === 'range') {
+        input.value = settings[key];
+        const out = input.parentElement.querySelector('output');
+        if (out) out.textContent = settings[key] + ' px';
+      }
+    }
+    for (const group of $$('[data-setting-group]', settingsEl)) {
+      const key = group.dataset.settingGroup;
+      for (const b of $$('button', group)) b.setAttribute('aria-checked', String(b.dataset.value === settings[key]));
+      if (!settingsEl.hidden) moveIndicator(group);
+    }
+  }
+
+  settingsEl.addEventListener('input', (e) => {
+    const input = e.target.closest('[data-setting]');
+    if (!input) return;
+    setSetting(input.dataset.setting, input.type === 'checkbox' ? input.checked : Number(input.value));
+    if (input.dataset.setting === 'autosave') scheduleAutosave();
+  });
+  settingsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-setting-group] button');
+    if (b) { setSetting(b.closest('[data-setting-group]').dataset.settingGroup, b.dataset.value); return; }
+    if (e.target.closest('[data-close]')) closeSettings();
+    if (e.target.closest('#settings-reset')) {
+      Object.assign(settings, SETTING_DEFAULTS);
+      ls.set('settings', settings);
+      applySettings();
+      renderSettingsForm();
+      toast('Settings restored');
+    }
+  });
+  settingsEl.addEventListener('mousedown', (e) => { if (e.target === settingsEl) closeSettings(); });
+  settingsEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSettings(); return; }
+    if (e.key !== 'Tab') return;
+    const focusable = $$('button, input', settingsEl).filter((el) => el.offsetParent !== null);
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+
+  function openSettings() {
+    closeMenu();
+    if (!palette.hidden) closePalette();
+    if (!about.hidden) closeAbout();
+    settingsReturnFocus = document.activeElement;
+    settingsEl.hidden = false;
+    renderSettingsForm();
+    $('#settings-dialog').focus();
+  }
+  function closeSettings() {
+    settingsEl.hidden = true;
+    if (settingsReturnFocus && settingsReturnFocus.focus) settingsReturnFocus.focus({ preventScroll: true });
+  }
+  $('#btn-settings').addEventListener('click', openSettings);
+
+  /* ---------- Zoom (Windows; macOS uses the View menu) ---------- */
+  function zoom(dir) {
+    if (!native || !native.setZoom) return;
+    const level = dir === 0 ? 0 : Math.max(-4, Math.min(5, ls.get('zoom', 0) + dir));
+    ls.set('zoom', level);
+    native.setZoom(level);
+    syncMap = null;
+    setTimeout(refreshIndicators, 50);
+    toast(`Zoom ${Math.round(Math.pow(1.2, level) * 100)}%`);
+  }
+
+  /* ---------- Reading progress ---------- */
+  const progress = $('#read-progress span');
+  previewPane.addEventListener('scroll', () => {
+    const max = previewPane.scrollHeight - previewPane.clientHeight;
+    progress.style.transform = `scaleX(${max > 0 ? previewPane.scrollTop / max : 0})`;
+  }, { passive: true });
+
+  /* ---------- Sidebar sections ---------- */
+  const collapsed = new Set(ls.get('collapsed', []));
+  for (const sec of $$('.side-section[data-section]')) {
+    sec.classList.toggle('collapsed', collapsed.has(sec.dataset.section));
+    const head = sec.querySelector('.side-toggle');
+    head.setAttribute('aria-expanded', String(!collapsed.has(sec.dataset.section)));
+    head.addEventListener('click', () => {
+      const id = sec.dataset.section;
+      if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+      sec.classList.toggle('collapsed', collapsed.has(id));
+      head.setAttribute('aria-expanded', String(!collapsed.has(id)));
+      ls.set('collapsed', [...collapsed]);
+    });
+  }
+  const folderBtn = $('#btn-folder');
+  if (folderBtn) folderBtn.addEventListener('click', (e) => { e.stopPropagation(); openFolder(); });
+
   /* ---------- Global shortcuts ---------- */
   window.addEventListener('keydown', (e) => {
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
     if (e.key === 'F1') { e.preventDefault(); about.hidden ? openAbout() : closeAbout(); return; }
+    if (e.key === 'F3') { e.preventDefault(); if (find.open) step(e.shiftKey ? -1 : 1); else openFind(false); return; }
     if (e.key === 'Escape') {
+      if (!lightbox.hidden) { lightbox.hidden = true; return; }
+      if (openPop) { closePopover(); return; }
       if (!moreMenu.hidden) { closeMenu(); return; }
+      if (find.open) { closeFind(); return; }
       if (app.classList.contains('zen')) { toggleZen(false); return; }
     }
     if (!mod) return;
+    if (e.code === 'KeyF' && e.altKey && !e.shiftKey) { e.preventDefault(); openFind(true); return; }
+    if (k === 'f' && !e.altKey && !e.shiftKey) { e.preventDefault(); openFind(false); return; }
+    if (e.key === ',' && !e.altKey && !e.shiftKey) { e.preventDefault(); settingsEl.hidden ? openSettings() : closeSettings(); return; }
+    if (native && !isMac && !e.altKey && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')) {
+      e.preventDefault();
+      zoom(e.key === '-' ? -1 : e.key === '0' ? 0 : 1);
+      return;
+    }
     if (k === 's' && e.shiftKey) { e.preventDefault(); saveAs(); }
     else if (k === 's') { e.preventDefault(); save(); }
     else if (k === 'o') { e.preventDefault(); openFile(); }
@@ -1297,6 +2543,8 @@ img{max-width:100%;border-radius:10px}hr{border:0;border-top:1px solid var(--bor
       if (finder) finder.lastChild.textContent = 'Show in Finder';
     }
     if (native) native.onMenuCommand((id) => { if (commandById[id]) commandById[id].run(); });
+    applySettings();
+    if (native && !isMac && native.setZoom && ls.get('zoom', 0)) native.setZoom(ls.get('zoom', 0));
     setTheme(currentTheme(), false);
     const split = ls.get('split', null);
     if (split) workspace.style.setProperty('--split', split);

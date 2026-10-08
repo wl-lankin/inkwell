@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, screen, clipboard, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -8,6 +8,8 @@ const { fileURLToPath } = require('node:url');
 const updater = require('./updater');
 
 const DOC_EXT = /\.(md|markdown|mdown|mkd|mkdn|txt)$/i;
+const TREE_EXT = /\.(md|markdown|mdown|mkd|mkdn)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i;
 const FILTERS = [
   { name: 'Markdown', extensions: ['md', 'markdown', 'mdown', 'mkd', 'mkdn'] },
   { name: 'Text', extensions: ['txt'] },
@@ -110,6 +112,8 @@ function createWindow(filePath = null) {
     });
   }
 
+  win.webContents.on('context-menu', (_e, params) => showContextMenu(win, params));
+
   win.on('close', (e) => {
     if (st.dirty && !st.forceClose) {
       e.preventDefault();
@@ -152,6 +156,38 @@ function handleLink(url) {
   } else if (/^(https?|mailto):/i.test(url)) {
     shell.openExternal(url);
   }
+}
+
+/* ---------- Context menu (with spelling suggestions) ---------- */
+function showContextMenu(win, p) {
+  const items = [];
+  const sep = () => { if (items.length && items[items.length - 1].type !== 'separator') items.push({ type: 'separator' }); };
+  if (p.misspelledWord) {
+    for (const word of p.dictionarySuggestions.slice(0, 6)) {
+      items.push({ label: word, click: () => win.webContents.replaceMisspelling(word) });
+    }
+    if (!p.dictionarySuggestions.length) items.push({ label: 'No spelling suggestions', enabled: false });
+    items.push({ label: 'Add to Dictionary', click: () => win.webContents.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
+    sep();
+  }
+  if (p.linkURL && /^(https?|mailto):/i.test(p.linkURL)) {
+    items.push({ label: 'Open Link', click: () => shell.openExternal(p.linkURL) });
+    items.push({ label: 'Copy Link', click: () => clipboard.writeText(p.linkURL) });
+    sep();
+  }
+  if (p.mediaType === 'image' && p.srcURL) {
+    items.push({ label: 'Copy Image', click: () => win.webContents.copyImageAt(p.x, p.y) });
+    sep();
+  }
+  if (p.isEditable) {
+    items.push({ role: 'undo', enabled: p.editFlags.canUndo }, { role: 'redo', enabled: p.editFlags.canRedo }, { type: 'separator' });
+    items.push({ role: 'cut', enabled: p.editFlags.canCut }, { role: 'copy', enabled: p.editFlags.canCopy }, { role: 'paste', enabled: p.editFlags.canPaste });
+    items.push({ type: 'separator' }, { role: 'selectAll' });
+  } else if (p.selectionText && p.selectionText.trim()) {
+    items.push({ role: 'copy' });
+  }
+  while (items.length && items[items.length - 1].type === 'separator') items.pop();
+  if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
 }
 
 /* ---------- File watching ---------- */
@@ -287,6 +323,51 @@ ipcMain.handle('app-info', () => ({
 
 ipcMain.on('show-in-folder', (_event, filePath) => shell.showItemInFolder(filePath));
 
+ipcMain.handle('open-folder-dialog', async (event) => {
+  const st = stateFor(event);
+  const res = await dialog.showOpenDialog(st.win, {
+    title: 'Open Folder',
+    defaultPath: st.filePath ? path.dirname(st.filePath) : app.getPath('documents'),
+    properties: ['openDirectory'],
+  });
+  return res.canceled ? null : res.filePaths[0];
+});
+
+// Folder contents for the sidebar: subfolders and Markdown files, no hidden entries.
+ipcMain.handle('list-dir', async (_event, dir) => {
+  if (typeof dir !== 'string' || dir.startsWith('\\\\')) return [];
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  return entries
+    .filter((e) => !e.name.startsWith('.') && !['node_modules', '__pycache__'].includes(e.name))
+    .filter((e) => e.isDirectory() || (e.isFile() && TREE_EXT.test(e.name)))
+    .map((e) => ({ name: e.name, path: path.join(dir, e.name), dir: e.isDirectory() }))
+    .sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })))
+    .slice(0, 1000);
+});
+
+// Saves a pasted or dropped image into "assets" next to the window's document.
+// Returns the path relative to the document, with forward slashes.
+ipcMain.handle('save-asset', async (event, name, bytes) => {
+  const st = stateFor(event);
+  if (!st || !st.filePath) throw new Error('Save the document first');
+  if (!(bytes instanceof Uint8Array) || bytes.length > 50 * 1024 * 1024) throw new Error('Image is too large');
+  let base = path.basename(String(name || 'image.png')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/\s+/g, '-');
+  if (!IMAGE_EXT.test(base)) base += '.png';
+  if (/^image\.png$/i.test(base)) {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    base = `image-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
+  }
+  const dir = path.join(path.dirname(st.filePath), 'assets');
+  await fsp.mkdir(dir, { recursive: true });
+  const ext = path.extname(base);
+  const stem = base.slice(0, -ext.length);
+  let file = base;
+  for (let i = 2; fs.existsSync(path.join(dir, file)); i++) file = `${stem}-${i}${ext}`;
+  await fsp.writeFile(path.join(dir, file), bytes);
+  return `assets/${file}`;
+});
+
 nativeTheme.on('updated', () => {
   for (const { win } of windows.values()) {
     if (win.isDestroyed()) continue;
@@ -313,6 +394,8 @@ function buildMacMenu() {
         cmd('About Inkwell', 'about'),
         { label: 'Check for Updates…', click: () => updater.check(true) },
         { type: 'separator' },
+        cmd('Settings…', 'settings', 'Cmd+,'),
+        { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
         { role: 'hide' },
@@ -328,6 +411,7 @@ function buildMacMenu() {
         { label: 'New Window', accelerator: 'Cmd+N', registerAccelerator: false, click: () => createWindow() },
         cmd('New Document', 'new', 'Cmd+Alt+N'),
         cmd('Open…', 'open', 'Cmd+O'),
+        cmd('Open Folder…', 'openFolder'),
         { role: 'recentDocuments', submenu: [{ role: 'clearRecentDocuments' }] },
         { type: 'separator' },
         cmd('Save', 'save', 'Cmd+S'),
@@ -355,8 +439,27 @@ function buildMacMenu() {
         { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
         { role: 'selectAll' },
+        cmd('Paste as Plain Text', 'pastePlain', 'Cmd+Shift+V'),
+        { type: 'separator' },
+        cmd('Find…', 'find', 'Cmd+F'),
+        cmd('Find and Replace…', 'replace', 'Cmd+Alt+F'),
         { type: 'separator' },
         { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] },
+      ],
+    },
+    {
+      label: 'Format',
+      submenu: [
+        cmd('Highlight', 'highlight', 'Cmd+Shift+H'),
+        cmd('Format Table', 'formatTable'),
+        { type: 'separator' },
+        cmd('Insert Table', 'insertTable'),
+        cmd('Insert Math', 'insertMath', 'Cmd+Shift+M'),
+        cmd('Insert Diagram', 'insertDiagram'),
+        cmd('Insert Callout', 'insertCallout'),
+        cmd('Insert Footnote', 'insertFootnote'),
+        cmd('Insert Table of Contents', 'insertToc'),
+        cmd('Insert Date', 'insertDate'),
       ],
     },
     {
@@ -369,6 +472,7 @@ function buildMacMenu() {
         cmd('Toggle Sidebar', 'sidebar', 'Cmd+Shift+B'),
         cmd('Focus Mode', 'zen', 'Cmd+.'),
         cmd('Command Palette…', 'palette', 'Cmd+Shift+P'),
+        cmd('Typewriter Scrolling', 'typewriter'),
         { type: 'separator' },
         cmd('Light Theme', 'themeLight'),
         cmd('Dark Theme', 'themeDark'),
@@ -393,6 +497,22 @@ function buildMacMenu() {
   ]);
 }
 
+// Windows checks spelling in the user's preferred system languages (macOS does this itself).
+function setSpellLanguages() {
+  if (isMac) return;
+  try {
+    const available = session.defaultSession.availableSpellCheckerLanguages;
+    const pick = [];
+    for (const lang of app.getPreferredSystemLanguages()) {
+      const l = lang.toLowerCase();
+      const match = available.find((a) => a.toLowerCase() === l) || available.find((a) => a.toLowerCase().split('-')[0] === l.split('-')[0]);
+      if (match && !pick.includes(match)) pick.push(match);
+    }
+    if (!pick.includes('en-US') && available.includes('en-US')) pick.push('en-US');
+    if (pick.length) session.defaultSession.setSpellCheckerLanguages(pick.slice(0, 4));
+  } catch (e) { /* spellchecker unavailable */ }
+}
+
 /* ---------- App lifecycle ---------- */
 // macOS delivers files opened from Finder through 'open-file', often before the app is ready.
 const pendingOpens = [];
@@ -415,6 +535,7 @@ if (!app.requestSingleInstanceLock()) {
     loadSettings();
     if (settings.theme) nativeTheme.themeSource = settings.theme;
     Menu.setApplicationMenu(isMac ? buildMacMenu() : null);
+    setSpellLanguages();
     updater.start();
     const files = [...pendingOpens, ...docArgs(process.argv.slice(1))];
     if (files.length) files.forEach(openPath);

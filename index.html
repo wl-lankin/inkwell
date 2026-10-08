@@ -57,6 +57,21 @@
       <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19.5 12.6 12 20l-7.5-7.4A5 5 0 1 1 12 6a5 5 0 1 1 7.5 6.6z"/></symbol>
       <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M10 13h4M7 16h10"/></symbol>
       <symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+      <symbol id="i-replace" viewBox="0 0 24 24"><path d="M4 7h11l-3-3M20 17H9l3 3"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+      <symbol id="i-sigma" viewBox="0 0 24 24"><path d="M18 6V4H6l7 8-7 8h12v-2"/></symbol>
+      <symbol id="i-diagram" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="6" rx="1.5"/><rect x="14" y="15" width="7" height="6" rx="1.5"/><path d="M6.5 9v3.5a2 2 0 0 0 2 2H14"/></symbol>
+      <symbol id="i-callout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 4v16M11 9h6M11 13h4"/></symbol>
+      <symbol id="i-footnote" viewBox="0 0 24 24"><path d="M4 18h9M4 13h12"/><path d="M17 4h2v6M16.5 10h5"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+      <symbol id="i-highlight" viewBox="0 0 24 24"><path d="m9 11-5 5v3h3l5-5"/><path d="m9 11 6.5-6.5a2.1 2.1 0 0 1 3 3L12 14z"/><path d="M14 21h7"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="i-insert" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
     </defs>
   </svg>
 
@@ -86,6 +101,9 @@
           <button class="icon-btn" id="btn-more" title="More" aria-label="More actions" aria-haspopup="menu"><svg><use href="#i-more"/></svg></button>
           <div class="menu" id="more-menu" role="menu" hidden>
             <button role="menuitem" data-cmd="saveAs"><svg><use href="#i-save"/></svg>Save as…<kbd>Ctrl Shift S</kbd></button>
+            <button role="menuitem" data-cmd="openFolder" class="native-only"><svg><use href="#i-folder"/></svg>Open folder…</button>
+            <button role="menuitem" data-cmd="find"><svg><use href="#i-search"/></svg>Find and replace<kbd>Ctrl F</kbd></button>
+            <hr>
             <button role="menuitem" data-cmd="exportHtml"><svg><use href="#i-download"/></svg>Export HTML</button>
             <button role="menuitem" data-cmd="copyHtml"><svg><use href="#i-copy"/></svg>Copy as HTML</button>
             <button role="menuitem" data-cmd="exportPdf" class="native-only"><svg><use href="#i-download"/></svg>Export PDF</button>
@@ -94,8 +112,10 @@
             <hr>
             <button role="menuitem" data-cmd="zen"><svg><use href="#i-focus"/></svg>Focus mode<kbd>Ctrl .</kbd></button>
             <button role="menuitem" data-cmd="palette"><svg><use href="#i-command"/></svg>Command palette<kbd>Ctrl Shift P</kbd></button>
+            <button role="menuitem" data-cmd="settings"><svg><use href="#i-settings"/></svg>Settings<kbd>Ctrl ,</kbd></button>
           </div>
         </div>
+        <button class="icon-btn" id="btn-settings" title="Settings (Ctrl+,)" aria-label="Settings"><svg><use href="#i-settings"/></svg></button>
         <button class="icon-btn" id="btn-about" title="About Inkwell (F1)" aria-label="About Inkwell"><svg><use href="#i-help"/></svg></button>
         <span class="divider-v" aria-hidden="true"></span>
         <div class="segmented theme-switch" role="radiogroup" aria-label="Theme">
@@ -109,13 +129,20 @@
 
     <div class="body">
       <aside class="sidebar" id="sidebar">
-        <section class="side-section">
-          <h2 class="side-heading">Outline</h2>
-          <nav class="outline" id="outline" aria-label="Document outline"></nav>
+        <section class="side-section" data-section="outline">
+          <h2 class="side-heading"><button class="side-toggle"><svg class="chev"><use href="#i-chevron"/></svg>Outline</button></h2>
+          <nav class="outline side-content" id="outline" aria-label="Document outline"></nav>
         </section>
-        <section class="side-section">
-          <h2 class="side-heading">Recent</h2>
-          <ul class="recent" id="recent"></ul>
+        <section class="side-section native-only" data-section="files">
+          <h2 class="side-heading">
+            <button class="side-toggle"><svg class="chev"><use href="#i-chevron"/></svg><span id="files-name">Files</span></button>
+            <button class="side-action" id="btn-folder" title="Open folder…" aria-label="Open folder"><svg><use href="#i-folder"/></svg></button>
+          </h2>
+          <div class="files side-content" id="files"></div>
+        </section>
+        <section class="side-section" data-section="recent">
+          <h2 class="side-heading"><button class="side-toggle"><svg class="chev"><use href="#i-chevron"/></svg>Recent</button></h2>
+          <ul class="recent side-content" id="recent"></ul>
         </section>
       </aside>
 
@@ -126,6 +153,7 @@
             <button data-fmt="bold" title="Bold (Ctrl+B)"><svg><use href="#i-bold"/></svg></button>
             <button data-fmt="italic" title="Italic (Ctrl+I)"><svg><use href="#i-italic"/></svg></button>
             <button data-fmt="strike" title="Strikethrough (Ctrl+Shift+X)"><svg><use href="#i-strike"/></svg></button>
+            <button data-fmt="mark" title="Highlight (Ctrl+Shift+H)"><svg><use href="#i-highlight"/></svg></button>
             <span class="fmt-sep"></span>
             <button data-fmt="link" title="Link (Ctrl+K)"><svg><use href="#i-link"/></svg></button>
             <button data-fmt="image" title="Image"><svg><use href="#i-image"/></svg></button>
@@ -135,18 +163,47 @@
             <button data-fmt="ul" title="Bulleted list"><svg><use href="#i-list"/></svg></button>
             <button data-fmt="ol" title="Numbered list"><svg><use href="#i-olist"/></svg></button>
             <button data-fmt="task" title="Task list"><svg><use href="#i-check"/></svg></button>
-            <button data-fmt="table" title="Table"><svg><use href="#i-table"/></svg></button>
-            <button data-fmt="hr" title="Divider"><svg><use href="#i-hr"/></svg></button>
+            <button data-pop="table-picker" title="Table" aria-haspopup="true"><svg><use href="#i-table"/></svg></button>
+            <span class="fmt-sep"></span>
+            <button data-fmt="math" title="Math (Ctrl+Shift+M)"><svg><use href="#i-sigma"/></svg></button>
+            <button data-fmt="diagram" title="Diagram"><svg><use href="#i-diagram"/></svg></button>
+            <button data-fmt="callout" title="Callout"><svg><use href="#i-callout"/></svg></button>
+            <button data-pop="insert-menu" title="Insert" aria-haspopup="menu"><svg><use href="#i-insert"/></svg></button>
           </div>
+          <div class="editor-marks" id="editor-marks" aria-hidden="true" hidden></div>
           <textarea id="editor" class="editor" spellcheck="true" autocomplete="off" autocapitalize="off" aria-label="Markdown editor" placeholder="Start writing…"></textarea>
         </section>
 
         <div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Resize panes" tabindex="0"></div>
 
         <section class="pane pane-preview" id="pane-preview">
+          <div class="read-progress" id="read-progress" aria-hidden="true"><span></span></div>
           <article class="prose" id="preview"></article>
         </section>
       </main>
+
+      <div class="findbar" id="findbar" role="search" hidden>
+        <button class="icon-btn fb-toggle" id="fb-toggle" title="Toggle replace" aria-label="Toggle replace"><svg><use href="#i-chevron"/></svg></button>
+        <div class="fb-rows">
+          <div class="fb-row">
+            <div class="fb-field">
+              <input id="fb-find" placeholder="Find" spellcheck="false" autocomplete="off" aria-label="Find">
+              <span class="fb-count" id="fb-count"></span>
+              <button class="fb-opt" data-opt="case" title="Match case" aria-label="Match case">Aa</button>
+              <button class="fb-opt" data-opt="word" title="Whole word" aria-label="Whole word"><u>ab</u></button>
+              <button class="fb-opt" data-opt="regex" title="Regular expression" aria-label="Regular expression">.*</button>
+            </div>
+            <button class="icon-btn" id="fb-prev" title="Previous match (Shift+Enter)" aria-label="Previous match"><svg><use href="#i-up"/></svg></button>
+            <button class="icon-btn" id="fb-next" title="Next match (Enter)" aria-label="Next match"><svg><use href="#i-down"/></svg></button>
+            <button class="icon-btn" id="fb-close" title="Close (Esc)" aria-label="Close"><svg><use href="#i-x"/></svg></button>
+          </div>
+          <div class="fb-row fb-replace-row">
+            <div class="fb-field"><input id="fb-replace" placeholder="Replace" spellcheck="false" autocomplete="off" aria-label="Replace"></div>
+            <button class="btn btn-small" id="fb-one" title="Replace (Enter)">Replace</button>
+            <button class="btn btn-small" id="fb-all" title="Replace all (Ctrl+Enter)">All</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <footer class="statusbar">
@@ -162,7 +219,7 @@
   <div class="drop-overlay" id="drop-overlay" hidden>
     <div class="drop-card">
       <img src="icon.svg" alt="" width="48" height="48">
-      <p>Drop a Markdown file to open it</p>
+      <p id="drop-text">Drop a Markdown file to open it</p>
     </div>
   </div>
 
@@ -222,6 +279,74 @@
     </div>
   </div>
 
+  <div class="menu popover" id="insert-menu" role="menu" hidden>
+    <button role="menuitem" data-fmt="footnote"><svg><use href="#i-footnote"/></svg>Footnote</button>
+    <button role="menuitem" data-fmt="toc"><svg><use href="#i-list"/></svg>Table of contents</button>
+    <button role="menuitem" data-fmt="task"><svg><use href="#i-check"/></svg>Task list</button>
+    <button role="menuitem" data-fmt="image"><svg><use href="#i-image"/></svg>Image</button>
+    <button role="menuitem" data-fmt="hr"><svg><use href="#i-hr"/></svg>Divider</button>
+    <button role="menuitem" data-fmt="date"><svg><use href="#i-calendar"/></svg>Today's date</button>
+  </div>
+
+  <div class="popover table-picker" id="table-picker" hidden>
+    <div class="table-grid" id="table-grid"></div>
+    <p class="table-size" id="table-size">Pick a size</p>
+  </div>
+
+  <div class="modal-backdrop" id="settings" hidden>
+    <div class="modal settings" id="settings-dialog" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <button class="icon-btn modal-close" data-close aria-label="Close"><svg><use href="#i-x"/></svg></button>
+      <header class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <p>Changes apply right away.</p>
+      </header>
+      <div class="settings-body">
+        <h3>Writing</h3>
+        <div class="set-row">
+          <label for="set-editor-size">Text size</label>
+          <div class="set-range"><input type="range" id="set-editor-size" data-setting="editorSize" min="12" max="22" step="0.5"><output></output></div>
+        </div>
+        <label class="set-row"><span>Check spelling<small>Right-click a word for suggestions</small></span><span class="switch"><input type="checkbox" data-setting="spellcheck"><span></span></span></label>
+        <label class="set-row"><span>Close brackets and quotes<small>Typing ( [ { " ` adds the closing one, and wraps selected text</small></span><span class="switch"><input type="checkbox" data-setting="autoPair"><span></span></span></label>
+        <label class="set-row"><span>Paste web pages as Markdown<small>Headings, lists, links and tables from browsers, Word and Google Docs</small></span><span class="switch"><input type="checkbox" data-setting="smartPaste"><span></span></span></label>
+        <label class="set-row"><span>Typewriter scrolling<small>Keeps the line you're writing in the middle</small></span><span class="switch"><input type="checkbox" data-setting="typewriter"><span></span></span></label>
+        <label class="set-row"><span>Save automatically<small>Saves a moment after you stop typing, for documents saved before</small></span><span class="switch"><input type="checkbox" data-setting="autosave"><span></span></span></label>
+
+        <h3>Reading</h3>
+        <div class="set-row">
+          <label for="set-read-size">Text size</label>
+          <div class="set-range"><input type="range" id="set-read-size" data-setting="readSize" min="15" max="26" step="0.5"><output></output></div>
+        </div>
+        <div class="set-row">
+          <span>Line width</span>
+          <div class="segmented" data-setting-group="readWidth" role="radiogroup" aria-label="Line width">
+            <button role="radio" data-value="narrow">Narrow</button>
+            <button role="radio" data-value="normal">Normal</button>
+            <button role="radio" data-value="wide">Wide</button>
+            <span class="seg-indicator" aria-hidden="true"></span>
+          </div>
+        </div>
+        <div class="set-row">
+          <span>Typeface</span>
+          <div class="segmented" data-setting-group="readFont" role="radiogroup" aria-label="Typeface">
+            <button role="radio" data-value="serif">Serif</button>
+            <button role="radio" data-value="sans">Sans</button>
+            <span class="seg-indicator" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>
+      <footer class="settings-foot">
+        <button class="btn" id="settings-reset">Restore defaults</button>
+        <button class="btn btn-primary" data-close>Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="lightbox" id="lightbox" hidden>
+    <img id="lightbox-img" alt="">
+    <p id="lightbox-caption"></p>
+  </div>
+
   <div class="update-card" id="update-card" role="status" aria-live="polite" hidden>
     <img src="icon.svg" alt="" width="36" height="36">
     <div class="update-card-body">
@@ -241,6 +366,9 @@
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/purify.min.js"></script>
   <script src="vendor/highlight.min.js"></script>
+  <script src="vendor/turndown.js"></script>
+  <script src="vendor/turndown-plugin-gfm.js"></script>
+  <script src="vendor/emoji.js"></script>
   <script src="welcome.js"></script>
   <script src="app.js"></script>
 </body>
