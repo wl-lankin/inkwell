@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           npm version 0.0.1 --no-git-tag-version --allow-same-version
-          if [ "$RUNNER_OS" = "macOS" ]; then npx electron-builder --mac zip --universal --publish never; else npm run dist:win; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then npx electron-builder --config electron-builder.config.js --mac zip --universal --publish never; else npm run dist:win; fi
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 

@@ -133,6 +133,20 @@ Updates come from GitHub releases. Windows uses [electron-updater](https://www.e
 
 You can also open `index.html` in Chrome or Edge without Electron. In that mode Inkwell uses the File System Access API and autosaves drafts locally.
 
+### Code signing (macOS)
+
+Without Apple credentials, the Mac build is ad-hoc signed and needs a one-time **Open Anyway**. With the following GitHub Actions secrets, the Release workflow signs it with a Developer ID, enables the hardened runtime, notarizes it with Apple and checks the result with Gatekeeper:
+
+| Secret | What it is |
+| --- | --- |
+| `MAC_CERT_P12_BASE64` | Your **Developer ID Application** certificate with its private key, exported as `.p12` and base64-encoded |
+| `MAC_CERT_PASSWORD` | The password you chose when exporting the `.p12` |
+| `APPLE_API_KEY_P8` | Contents of the App Store Connect API key file (`AuthKey_XXXXXXXXXX.p8`) |
+| `APPLE_API_KEY_ID` | The key's ID (10 characters) |
+| `APPLE_API_ISSUER` | The Issuer ID shown above the keys list (a UUID) |
+
+To check the setup without publishing anything, run the Release workflow manually from the Actions tab with **publish** turned off.
+
 ### Project layout
 
 | Path | Purpose |
