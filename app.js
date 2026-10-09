@@ -122,6 +122,7 @@
   };
 
   function setDocument({ content, name, handle = null, savedContent = content }) {
+    rememberPosition();
     editor.value = content;
     docName.value = name || 'Untitled.md';
     state.handle = handle;
@@ -134,7 +135,33 @@
     persistDraft();
     updateMeta();
     refreshFiles();
+    if (handle && handle.path) restorePosition(handle.path);
   }
+
+  // Cursor and scroll position per file (desktop), so reopening a recent file picks up where you left off.
+  const positionKey = (p) => p.replace(/\\/g, '/').toLowerCase();
+  function rememberPosition() {
+    if (!native || !state.handle || !state.handle.path) return;
+    const all = ls.get('positions', {});
+    const key = positionKey(state.handle.path);
+    delete all[key];
+    all[key] = { sel: [editor.selectionStart, editor.selectionEnd], top: editor.scrollTop, pTop: previewPane.scrollTop };
+    const keys = Object.keys(all);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 100))) delete all[k];
+    ls.set('positions', all);
+  }
+  function restorePosition(p) {
+    const pos = ls.get('positions', {})[positionKey(p)];
+    if (!pos) return;
+    const len = editor.value.length;
+    editor.setSelectionRange(Math.min(pos.sel[0], len), Math.min(pos.sel[1], len));
+    requestAnimationFrame(() => {
+      // In split view the preview follows the editor through scroll sync.
+      if (app.dataset.view === 'read') previewPane.scrollTop = pos.pTop;
+      else editor.scrollTop = pos.top;
+    });
+  }
+  window.addEventListener('beforeunload', rememberPosition);
 
   let draftTimer;
   function persistDraft() {
@@ -1480,6 +1507,9 @@
       await save();
       if (!state.dirty) native.closeWindow();
     });
+    native.onOpenPath(async (p) => {
+      if (await confirmDiscard()) openPath(p);
+    });
     native.onFileChanged(({ content }) => {
       const text = normalize(content);
       if (text === editor.value) return;
@@ -1515,6 +1545,30 @@
     renderRecent();
   }
 
+  const currentEntry = () => (state.handle ? (native ? { path: state.handle.path } : { handle: state.handle }) : null);
+
+  async function openRecent(r) {
+    const cur = currentEntry();
+    if (cur && (await sameEntry(r, cur))) return;
+    if (!(await confirmDiscard())) return;
+    try {
+      if (r.path) await openPath(r.path);
+      else if (r.handle) await openHandle(r.handle);
+      else { setDocument({ content: r.content || '', name: r.name }); addRecent(r); }
+    } catch (err) {
+      toast('That file is no longer available');
+    }
+  }
+
+  // Jumps back to the most recent file other than the current one; pressing it again toggles between the two.
+  async function switchToPrevious() {
+    const cur = currentEntry();
+    for (const r of await getRecent()) {
+      if (!cur || !(await sameEntry(r, cur))) { await openRecent(r); return; }
+    }
+    toast('No other recent file');
+  }
+
   async function renderRecent() {
     const list = await getRecent();
     recentEl.innerHTML = '';
@@ -1527,17 +1581,7 @@
       li.innerHTML = '<button class="recent-open"><svg><use href="#i-file"/></svg><span></span></button><button class="recent-remove" title="Remove from list" aria-label="Remove from list"><svg><use href="#i-x"/></svg></button>';
       li.querySelector('span').textContent = r.name;
       li.querySelector('.recent-open').title = `${r.path || r.name}\nOpened ${new Date(r.at).toLocaleString()}`;
-      li.querySelector('.recent-open').addEventListener('click', async () => {
-        if (state.handle && (await sameEntry(r, native ? { path: state.handle.path } : { handle: state.handle }))) return;
-        if (!(await confirmDiscard())) return;
-        try {
-          if (r.path) await openPath(r.path);
-          else if (r.handle) await openHandle(r.handle);
-          else { setDocument({ content: r.content || '', name: r.name }); addRecent(r); }
-        } catch (err) {
-          toast('That file is no longer available');
-        }
-      });
+      li.querySelector('.recent-open').addEventListener('click', () => openRecent(r));
       li.querySelector('.recent-remove').addEventListener('click', async () => {
         const cur = await getRecent();
         cur.splice(i, 1);
@@ -1849,6 +1893,8 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
   const commands = [
     { id: 'new', label: 'New document', icon: 'plus', kbd: 'Ctrl Alt N', run: newDoc },
     { id: 'open', label: 'Open file…', icon: 'open', kbd: 'Ctrl O', run: openFile },
+    { id: 'switchFile', label: 'Switch to recent file…', icon: 'file', kbd: native ? 'Ctrl Shift O' : '', run: () => openPalette('files') },
+    { id: 'previousFile', label: 'Switch to previous file', icon: 'file', kbd: native ? (isMac ? '\u2303 Tab' : 'Ctrl Tab') : '', run: switchToPrevious },
     { id: 'save', label: 'Save', icon: 'save', kbd: 'Ctrl S', run: save },
     { id: 'saveAs', label: 'Save as…', icon: 'save', kbd: 'Ctrl Shift S', run: saveAs },
     { id: 'write', label: 'View: Write', icon: 'pen', kbd: 'Ctrl 1', run: () => setView('write') },
@@ -1902,7 +1948,7 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
   const palette = $('#palette');
   const pInput = $('#palette-input');
   const pList = $('#palette-list');
-  let pItems = [], pActive = 0, pReturnFocus = null;
+  let pItems = [], pActive = 0, pReturnFocus = null, pMode = 'commands', pFiles = [];
 
   function fuzzyScore(query, text) {
     if (!query) return 1;
@@ -1920,20 +1966,22 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
 
   function renderPalette() {
     const q = pInput.value.trim();
-    pItems = commands.filter((c) => c.id !== 'palette')
+    const source = pMode === 'files' ? pFiles : commands.filter((c) => c.id !== 'palette');
+    pItems = source
       .map((c) => ({ c, s: fuzzyScore(q, c.label) }))
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s)
       .map((x) => x.c);
     pActive = Math.min(pActive, Math.max(0, pItems.length - 1));
     pList.innerHTML = '';
-    if (!pItems.length) { pList.innerHTML = '<li class="no-results">No matching commands</li>'; return; }
+    if (!pItems.length) { pList.innerHTML = `<li class="no-results">${pMode === 'files' ? 'No recent files' : 'No matching commands'}</li>`; return; }
     pItems.forEach((c, i) => {
       const li = document.createElement('li');
       li.setAttribute('role', 'option');
       li.className = i === pActive ? 'active' : '';
-      li.innerHTML = `<svg><use href="#i-${c.icon}"/></svg><span></span>${c.kbd ? `<kbd>${keyLabel(c.kbd)}</kbd>` : ''}`;
+      li.innerHTML = `<svg><use href="#i-${c.icon}"/></svg><span></span>${c.detail ? '<small class="palette-detail"></small>' : ''}${c.kbd ? `<kbd>${keyLabel(c.kbd)}</kbd>` : ''}`;
       li.querySelector('span').textContent = c.label;
+      if (c.detail) { li.querySelector('small').textContent = c.detail; li.title = c.detail; }
       li.addEventListener('mousemove', () => { if (pActive !== i) { pActive = i; highlightPalette(); } });
       li.addEventListener('click', () => runPalette(i));
       pList.appendChild(li);
@@ -1944,10 +1992,21 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
     const el = pList.children[pActive];
     if (el) el.scrollIntoView({ block: 'nearest' });
   }
-  function openPalette() {
-    pReturnFocus = document.activeElement;
+  async function openPalette(mode = 'commands') {
+    if (!palette.hidden && pMode === mode) return;
+    if (palette.hidden) pReturnFocus = document.activeElement;
+    pMode = mode;
+    if (mode === 'files') {
+      const cur = currentEntry();
+      pFiles = [];
+      for (const r of await getRecent()) {
+        if (cur && (await sameEntry(r, cur))) continue;
+        pFiles.push({ label: r.name, detail: r.path ? dirOf(r.path) : '', icon: 'file', run: () => openRecent(r) });
+      }
+    }
     palette.hidden = false;
     pInput.value = '';
+    pInput.placeholder = mode === 'files' ? 'Switch to a recent file…' : 'Type a command…';
     pActive = 0;
     renderPalette();
     pInput.focus();
@@ -1974,6 +2033,7 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
   const SHORTCUTS = [
     ['Files', [
       ['Open', 'Ctrl O'], ['Save', 'Ctrl S'], ['Save as', 'Ctrl Shift S'],
+      ...(native ? [['Switch to recent file', 'Ctrl Shift O'], ['Switch to previous file', isMac ? '\u2303 Tab' : 'Ctrl Tab']] : []),
       ...(native ? [['New window', 'Ctrl N'], ['Close window', 'Ctrl W']] : []),
       ['New document', 'Ctrl Alt N'], ['Print', 'Ctrl P'],
     ]],
@@ -2504,6 +2564,7 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
       if (find.open) { closeFind(); return; }
       if (app.classList.contains('zen')) { toggleZen(false); return; }
     }
+    if (native && e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab') { e.preventDefault(); switchToPrevious(); return; }
     if (!mod) return;
     if (e.code === 'KeyF' && e.altKey && !e.shiftKey) { e.preventDefault(); openFind(true); return; }
     if (k === 'f' && !e.altKey && !e.shiftKey) { e.preventDefault(); openFind(false); return; }
@@ -2515,6 +2576,7 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
     }
     if (k === 's' && e.shiftKey) { e.preventDefault(); saveAs(); }
     else if (k === 's') { e.preventDefault(); save(); }
+    else if (k === 'o' && e.shiftKey && native) { e.preventDefault(); openPalette('files'); }
     else if (k === 'o') { e.preventDefault(); openFile(); }
     else if (e.code === 'KeyN' && e.altKey) { e.preventDefault(); newDoc(); }
     else if (k === 'n' && native && !e.shiftKey) { e.preventDefault(); native.newWindow(); }

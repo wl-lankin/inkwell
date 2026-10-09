@@ -35,6 +35,7 @@ function saveSettings() {
 
 /* ---------- Window registry ---------- */
 const windows = new Map(); // webContents.id -> { win, filePath, name, dirty, forceClose, pendingFile, lastKnown, watcher }
+let lastFocusedId = null;
 
 const overlay = () => ({ ...(nativeTheme.shouldUseDarkColors ? COLORS.dark : COLORS.light), height: TITLEBAR_HEIGHT });
 
@@ -56,6 +57,22 @@ function openPath(filePath) {
     }
   }
   createWindow(filePath);
+}
+
+// Files opened from the OS (Explorer, Finder, "Open with") go into the last used window,
+// unless it has unsaved changes or is still loading - then they get a window of their own.
+function openFromOS(filePaths) {
+  const [first, ...rest] = filePaths;
+  const target = windows.get(lastFocusedId);
+  const alreadyOpen = [...windows.values()].some((st) => samePath(st.filePath, first));
+  if (first && target && !alreadyOpen && !target.dirty && !target.win.isDestroyed() && !target.win.webContents.isLoading()) {
+    if (target.win.isMinimized()) target.win.restore();
+    target.win.focus();
+    target.win.webContents.send('open-path', first);
+  } else if (first) {
+    openPath(first);
+  }
+  rest.forEach(openPath);
 }
 
 function createWindow(filePath = null) {
@@ -91,6 +108,8 @@ function createWindow(filePath = null) {
   const id = win.webContents.id;
   const st = { win, filePath: null, name: 'Untitled.md', dirty: false, forceClose: false, pendingFile: filePath, lastKnown: null, watcher: null };
   windows.set(id, st);
+  lastFocusedId = id;
+  win.on('focus', () => { lastFocusedId = id; });
 
   if (!focused && settings.maximized) win.maximize();
   win.once('ready-to-show', () => win.show());
@@ -140,6 +159,7 @@ function createWindow(filePath = null) {
   win.on('closed', () => {
     if (st.watcher) st.watcher.close();
     windows.delete(id);
+    if (lastFocusedId === id) lastFocusedId = null;
   });
 
   return win;
@@ -411,6 +431,8 @@ function buildMacMenu() {
         { label: 'New Window', accelerator: 'Cmd+N', registerAccelerator: false, click: () => createWindow() },
         cmd('New Document', 'new', 'Cmd+Alt+N'),
         cmd('Open…', 'open', 'Cmd+O'),
+        cmd('Switch to Recent File…', 'switchFile', 'Cmd+Shift+O'),
+        cmd('Switch to Previous File', 'previousFile', 'Ctrl+Tab'),
         cmd('Open Folder…', 'openFolder'),
         { role: 'recentDocuments', submenu: [{ role: 'clearRecentDocuments' }] },
         { type: 'separator' },
@@ -518,7 +540,7 @@ function setSpellLanguages() {
 const pendingOpens = [];
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
-  if (app.isReady()) openPath(filePath);
+  if (app.isReady()) openFromOS([filePath]);
   else pendingOpens.push(filePath);
 });
 
@@ -527,7 +549,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', (_event, argv, cwd) => {
     const files = docArgs(argv.slice(1), cwd);
-    if (files.length) files.forEach(openPath);
+    if (files.length) openFromOS(files);
     else createWindow();
   });
 

@@ -758,6 +758,7 @@ kbd {
 }
 .palette li svg { color: var(--muted); }
 .palette li kbd { margin-left: auto; }
+.palette li .palette-detail { min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palette li.active { background: var(--accent-soft); }
 .palette li.active svg { color: var(--accent); }
 .palette .no-results { color: var(--muted); cursor: default; }

@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('inkwellNative', {
   setZoom: (level) => webFrame.setZoomLevel(level),
   onSaveAndClose: (cb) => ipcRenderer.on('save-and-close', () => cb()),
   onFileChanged: (cb) => ipcRenderer.on('file-changed', (_e, data) => cb(data)),
+  onOpenPath: (cb) => ipcRenderer.on('open-path', (_e, path) => cb(path)),
 });
