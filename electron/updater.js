@@ -28,6 +28,7 @@ const execFileP = promisify(execFile);
 // status: idle | checking | none | downloading | ready | manual | error | unsupported
 let state = { status: 'idle' };
 let backend = null;
+let createBackend = null; // set by start(); the backend is built on first check to keep electron-updater off the startup path
 let busy = false;
 
 function log(...args) {
@@ -162,6 +163,7 @@ function macBackend() {
 
 /* ---------- Public API ---------- */
 async function check(manual = false) {
+  if (!backend && createBackend) backend = createBackend();
   if (!backend) {
     setState({ status: 'unsupported', message: app.isPackaged ? 'Automatic updates aren\'t available on this platform.' : 'Updates work in the installed app.' });
     return;
@@ -192,9 +194,9 @@ function start() {
   ipcMain.on('update-install', () => install());
 
   if (!app.isPackaged && !devMode) return;
-  if (isWin) backend = windowsBackend();
-  else if (isMac) backend = macBackend();
-  if (!backend) return;
+  if (isWin) createBackend = windowsBackend;
+  else if (isMac) createBackend = macBackend;
+  if (!createBackend) return;
 
   setTimeout(() => check(false), smoke ? 1000 : FIRST_CHECK_DELAY);
   setInterval(() => check(false), CHECK_INTERVAL).unref();

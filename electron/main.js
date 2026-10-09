@@ -111,8 +111,10 @@ function createWindow(filePath = null) {
   lastFocusedId = id;
   win.on('focus', () => { lastFocusedId = id; });
 
+  // Show right away instead of waiting for 'ready-to-show': the background color already matches
+  // the theme, and the page paints a moment later.
   if (!focused && settings.maximized) win.maximize();
-  win.once('ready-to-show', () => win.show());
+  win.show();
   win.loadFile(path.join(__dirname, '..', 'index.html'));
 
   win.webContents.setWindowOpenHandler(({ url }) => {

@@ -17,6 +17,15 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div class="boot" id="boot" aria-hidden="true">
+    <div class="boot-inner">
+      <div class="boot-glow"></div>
+      <img src="icon.svg" class="boot-icon" alt="" width="64" height="64">
+      <span class="boot-name">Inkwell</span>
+      <span class="boot-line"><span></span></span>
+    </div>
+  </div>
+
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
@@ -365,9 +374,6 @@
 
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/purify.min.js"></script>
-  <script src="vendor/highlight.min.js"></script>
-  <script src="vendor/turndown.js"></script>
-  <script src="vendor/turndown-plugin-gfm.js"></script>
   <script src="vendor/emoji.js"></script>
   <script src="welcome.js"></script>
   <script src="app.js"></script>

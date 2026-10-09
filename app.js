@@ -208,6 +208,14 @@
     return n ? `${base}-${n}` : base;
   }
 
+  // Syntax highlighting loads after startup; code blocks render plain until then.
+  const HLJS = 'vendor/highlight.min.js';
+  function hljsReady() {
+    if (window.hljs) return true;
+    loadScript(HLJS).then(scheduleRender, () => {});
+    return false;
+  }
+
   // Math ($inline$, $$display$$, ```math). KaTeX loads on first use; until then the TeX shows as code.
   const KATEX = 'vendor/katex/katex.min.js';
   function mathHtml(tex, display) {
@@ -332,7 +340,7 @@
           diagramSources.push(token.text);
           return `<div class="diagram" data-diagram="${diagramSources.length - 1}"></div>\n`;
         }
-        const known = lang && hljs.getLanguage(lang);
+        const known = lang && hljsReady() && hljs.getLanguage(lang);
         const body = known ? hljs.highlight(token.text, { language: lang, ignoreIllegals: true }).value : escapeHtml(token.text);
         const label = lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : '';
         return `<pre>${label}<code class="hljs${known ? ' language-' + lang : ''}">${body}</code></pre>\n`;
@@ -1233,13 +1241,14 @@
   const SEMANTIC = 'h1,h2,h3,h4,h5,h6,ul,ol,table,blockquote,pre,a[href],strong,b,em,i,img,code,hr,del,s';
   let turndown = null;
   function htmlToMarkdown(html) {
-    if (!window.TurndownService) return null;
+    // Both scripts load shortly after startup; until then HTML is pasted as plain text.
+    if (!window.TurndownService || !window.turndownPluginGfm) return null;
     const doc = DOMPurify.sanitize(html, { RETURN_DOM: true, FORBID_TAGS: ['style', 'meta', 'title'] });
     for (const b of doc.querySelectorAll('b[id^="docs-internal-guid"]')) b.replaceWith(...b.childNodes);
     if (!doc.querySelector(SEMANTIC)) return null;
     if (!turndown) {
       turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '_', strongDelimiter: '**', hr: '---' });
-      if (window.turndownPluginGfm) turndown.use(turndownPluginGfm.gfm);
+      turndown.use(turndownPluginGfm.gfm);
       // List items with a single space after the marker ("- item"), like Inkwell's own lists.
       turndown.addRule('listItem', {
         filter: 'li',
@@ -2643,6 +2652,13 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
     renderRecent();
     document.fonts && document.fonts.ready.then(() => { refreshIndicators(); syncMap = null; });
 
+    // Libraries that aren't needed for the first paint: highlighting, and HTML to Markdown for smart paste.
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 200));
+    idle(() => {
+      loadScript(HLJS).catch(() => {});
+      loadScript('vendor/turndown.js').then(() => loadScript('vendor/turndown-plugin-gfm.js')).catch(() => {});
+    });
+
     // Opened as an installed PWA with a file (file handler / launch queue).
     if ('launchQueue' in window) {
       window.launchQueue.setConsumer(async (params) => {
@@ -2651,5 +2667,14 @@ mark{background:#fbe7a1;color:inherit;padding:0 2px;border-radius:3px}.math-bloc
     }
   }
 
-  boot();
+  // The loader only fades in when startup is slow; if it never became visible, drop it at once.
+  function hideBoot() {
+    const el = $('#boot');
+    if (!el) return;
+    if (getComputedStyle(el.firstElementChild).opacity === '0') { el.remove(); return; }
+    el.classList.add('done');
+    el.addEventListener('transitionend', () => el.remove(), { once: true });
+  }
+
+  boot().finally(hideBoot);
 })();

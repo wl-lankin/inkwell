@@ -1163,6 +1163,68 @@ label.set-row { cursor: pointer; }
   .statusbar { gap: 12px; }
 }
 
+/* ============ Boot loader ============ */
+/* Covers the shell until the app has booted. It only fades in when startup is slow. */
+.boot {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: var(--bg);
+  -webkit-app-region: drag;
+  transition: opacity 0.25s var(--ease);
+}
+.boot.done { opacity: 0; pointer-events: none; }
+.boot-inner {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  opacity: 0;
+  animation: boot-in 0.4s var(--ease) 0.25s forwards;
+}
+.boot-glow {
+  position: absolute; top: -110px; left: 50%;
+  width: 380px; height: 300px; margin-left: -190px;
+  background:
+    /* Eased stops that fade to the same color at zero alpha, so the glow has no visible rim. */
+    radial-gradient(closest-side, rgb(from var(--accent) r g b / 0.2), rgb(from var(--accent) r g b / 0.11) 30%, rgb(from var(--accent) r g b / 0.045) 55%, rgb(from var(--accent) r g b / 0.012) 78%, rgb(from var(--accent) r g b / 0)),
+    radial-gradient(closest-side at 68% 58%, rgb(245 158 11 / 0.1), rgb(245 158 11 / 0.04) 45%, rgb(245 158 11 / 0.01) 75%, rgb(245 158 11 / 0));
+  pointer-events: none;
+}
+.boot-icon {
+  position: relative;
+  width: 64px; height: 64px;
+  border-radius: 15px;
+  box-shadow: 0 14px 30px -10px rgba(36, 51, 168, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  animation: float 5s ease-in-out infinite;
+}
+.boot-name {
+  position: relative;
+  margin: 18px 0 16px;
+  font: 500 22px/1 var(--font-read);
+  letter-spacing: -0.02em;
+  color: var(--text-2);
+}
+.boot-line {
+  position: relative;
+  width: 120px; height: 2px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.boot-line span {
+  position: absolute; inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: boot-sweep 1.4s var(--ease) infinite;
+}
+@keyframes boot-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes boot-fade { to { opacity: 1; } }
+@keyframes boot-sweep { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-inner { animation-name: boot-fade; }
+  .boot-icon, .boot-line span { animation: none; }
+  .boot-line span { width: 100%; opacity: 0.5; }
+}
+
 /* ============ Print ============ */
 @media print {
   :root { --bg: #fff; --surface: #fff; --text: #111; --code-bg: #f5f5f5; --border: #ddd; }
