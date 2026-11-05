@@ -94,7 +94,7 @@ Grab the latest version from the [**Releases page**](https://github.com/wl-lanki
 2. **Make it your default Markdown app:** right-click any `.md` file, choose **Open with > Choose another app > Inkwell**, then click **Always**.
 
 > [!NOTE]
-> The installer is code-signed (publisher Wolfgang Linz) from the next release on. While the certificate is new, Windows SmartScreen may still ask once; click **More info > Run anyway**.
+> The installer and the app are code-signed (publisher Wolfgang Linz), so Windows no longer warns about an unknown publisher. While the certificate is new, Windows SmartScreen may still ask once; click **More info > Run anyway**.
 
 ### macOS 12 or newer (Apple Silicon and Intel)
 
