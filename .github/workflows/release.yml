@@ -146,5 +146,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           ls -la out
+          # The same installers under fixed names, so .../releases/latest/download/<name> never changes.
+          cp out/Inkwell-*-mac-universal.dmg out/Inkwell-macOS.dmg
+          cp out/Inkwell-Setup-*.exe out/Inkwell-Windows-Setup.exe
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Inkwell ${TAG#v}" --generate-notes
           gh release upload "$TAG" out/* --clobber
